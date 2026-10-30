@@ -18,19 +18,26 @@ static class IslandApp
         try { return File.ReadAllText(Path.Combine(DataDir, "token")).Trim(); } catch { return null; }
     }
 
-    public static void Post(string route, string body, Dictionary<string, string> headers)
+    /** Posts to Island and returns its answer ("" when Island is not running or does not answer in time). */
+    public static string Post(string route, string body, Dictionary<string, string> headers, int timeoutMs = 1500)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(1500) };
+        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(timeoutMs) };
         using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{Port}{route}")
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
         foreach (var (k, v) in headers) req.Headers.TryAddWithoutValidation(k, v);
-        try { http.Send(req).Dispose(); }
+        try
+        {
+            using var res = http.Send(req);
+            using var reader = new StreamReader(res.Content.ReadAsStream());
+            return reader.ReadToEnd();
+        }
         catch (Exception e)
         {
             // usually Island is simply not running: nothing to tell, unless you are debugging
             if (Environment.GetEnvironmentVariable("ISLAND_DEBUG") == "1") Console.Error.WriteLine(e);
+            return "";
         }
     }
 
@@ -39,10 +46,11 @@ static class IslandApp
     public static string Str(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : "";
 }
 
-// "hook <agent>": Claude Code / Codex on Windows runs this for each event, with the event as JSON on stdin.
+// "hook <agent> [wait]": Claude Code / Codex on Windows runs this for each event, with the event as JSON on stdin.
+// With "wait" (a permission prompt) it waits for your answer in the island and prints it for Claude Code.
 static class Hook
 {
-    public static int Run(string agent)
+    public static int Run(string agent, bool wait = false)
     {
         var input = Console.In.ReadToEnd();
         var token = IslandApp.Token();
@@ -66,7 +74,7 @@ static class Hook
         // the window this session runs in, so a click in Island can bring it back
         if (name is "SessionStart" or "UserPromptSubmit" or "Notification" or "Stop")
         {
-            var win = Windows.AncestorWindow(Environment.ProcessId);
+            var win = Wnd.AncestorWindow(Environment.ProcessId);
             if (win != null)
             {
                 headers["X-Island-Window"] = ((long)win.Hwnd).ToString();
@@ -78,8 +86,33 @@ static class Hook
             var reply = Transcript.LastReply(ev);
             if (reply != "") headers["X-Island-Summary"] = IslandApp.B64(reply);
         }
-        IslandApp.Post("/hook", input, headers);
+        if (!wait)
+        {
+            IslandApp.Post("/hook", input, headers);
+            return 0;
+        }
+        var answer = IslandApp.Post("/hook?wait=1", input, headers, 30 * 60 * 1000);
+        if (answer.Contains("hookSpecificOutput")) { Console.Out.WriteLine(answer); Console.Out.Flush(); }
         return 0;
+    }
+}
+
+// "reply <agent>": a Claude Code Stop hook that runs in the background (asyncRewake) and waits until you type a
+// reply to this session in the island. Exit code 2 wakes Claude with your reply; 0 means there is nothing to send.
+static class Reply
+{
+    public static int Run(string agent)
+    {
+        var input = Console.In.ReadToEnd();
+        var token = IslandApp.Token();
+        if (token == null) return 0;
+        var answer = IslandApp.Post("/reply-wait", input, new() { ["X-Island-Token"] = token, ["X-Island-Agent"] = agent, ["X-Island-Src"] = "win" },
+            3 * 60 * 60 * 1000);
+        string reply;
+        try { reply = IslandApp.Str((JsonNode.Parse(answer) as JsonObject)?["reply"]); } catch { return 0; }
+        if (reply == "") return 0;
+        Console.Error.WriteLine("The user replied from Island (their Windows notch app) instead of the terminal: " + reply);
+        return 2;
     }
 }
 

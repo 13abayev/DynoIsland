@@ -44,8 +44,17 @@ function permissionText(ev) {
   let cmd = input.command;
   if (Array.isArray(cmd)) cmd = cmd[cmd.length - 1];
   if (cmd) return 'Wants to run: ' + oneLine(cmd, 100);
+  const file = base(input.file_path || input.path);
+  if (file) return `Wants to ${/^(Edit|MultiEdit|Write)$/.test(ev.tool_name) ? 'edit' : 'use'} ${file}`;
   if (ev.tool_name) return 'Wants to use ' + ev.tool_name;
   return 'Waiting for your approval';
+}
+
+/** What the session asks you, in one line: its question, its plan, or the permission it needs. */
+function askFor(ev) {
+  if (ev.tool_name === 'AskUserQuestion') return questionText(ev.tool_input) || 'Has a question for you';
+  if (ev.tool_name === 'ExitPlanMode') return 'A plan is ready for you to review';
+  return permissionText(ev);
 }
 
 class Hub extends EventEmitter {
@@ -55,8 +64,11 @@ class Hub extends EventEmitter {
     this.file = file;
     this.settings = settings;
     this.sessions = new Map();
+    this.waiters = new Map(); // "key#permission" / "key#reply" → a hook waiting for your answer (waitFor)
+    this.projects = new Map(); // folders your agents worked in, for the quick prompt
     this.usage = null;
     this.away = false;
+    this.holding = false; // you are focusing: reminders and notifications wait (hold)
     this.foreground = null;
     this.load();
     this.timer = setInterval(() => this.tick(), 10 * 1000);
@@ -70,8 +82,10 @@ class Hub extends EventEmitter {
       for (const s of saved.sessions || []) {
         if (now - (s.updatedAt || 0) > DAY) continue;
         if (s.state === 'working' && now - s.updatedAt > 30 * MIN) s.state = 'idle'; // Island was closed meanwhile
+        s.permission = null; // the hook that waited for an answer is gone with the old Island
         this.sessions.set(s.key, s);
       }
+      for (const p of saved.projects || []) this.projects.set(p.id, p);
       this.usage = saved.usage || null;
     } catch {}
   }
@@ -81,7 +95,7 @@ class Hub extends EventEmitter {
     this.saveTimer = setTimeout(() => {
       try {
         fs.mkdirSync(path.dirname(this.file), { recursive: true });
-        fs.writeFileSync(this.file + '.tmp', JSON.stringify({ sessions: [...this.sessions.values()], usage: this.usage }));
+        fs.writeFileSync(this.file + '.tmp', JSON.stringify({ sessions: [...this.sessions.values()], projects: [...this.projects.values()], usage: this.usage }));
         fs.renameSync(this.file + '.tmp', this.file);
       } catch {}
     }, 1000);
@@ -115,7 +129,7 @@ class Hub extends EventEmitter {
     s.reminders = 0;
     s.snoozedUntil = 0;
     s.nextReminderAt = now + set.remindAfterMin * MIN;
-    if (!looking && !s.muted) this.emit('notify', { kind: state, sessions: [s] });
+    if (!looking && !s.muted && !this.holding) this.emit('notify', { kind: state, sessions: [s] });
   }
 
   /** You are looking at this session right now (its VS Code window or browser tab is in front). */
@@ -135,14 +149,20 @@ class Hub extends EventEmitter {
   }
 
   // ---------- events from Claude Code / Codex hooks ----------
-  hookEvent(meta, ev) {
+  sessionKey(meta, ev) {
     const id = ev.session_id || ev.sessionId || ev.thread_id || ev.conversation_id;
-    if (!id) return;
+    return id ? `${meta.agent}:${id}` : '';
+  }
+
+  hookEvent(meta, ev) {
+    const key = this.sessionKey(meta, ev);
+    if (!key) return;
     const name = ev.hook_event_name || ev.hookEventName || '';
-    const key = `${meta.agent}:${id}`;
     const now = Date.now();
     let s = this.sessions.get(key);
     if (name === 'SessionEnd') {
+      this.release(key, 'permission');
+      this.release(key, 'reply');
       if (s) { this.sessions.delete(key); this.changed(); }
       return;
     }
@@ -156,45 +176,127 @@ class Hub extends EventEmitter {
     if (meta.term || meta.entry) s.term = meta.term === 'vscode' || /vscode/i.test(meta.entry) ? 'vscode' : meta.term;
     if (meta.branch) s.branch = meta.branch;
     if (meta.window) s.window = meta.window;
-    if (ev.cwd) { s.cwd = ev.cwd; s.project = base(ev.cwd); }
+    if (ev.cwd) { s.cwd = ev.cwd; s.project = base(ev.cwd); this.rememberProject(s); }
     s.updatedAt = now;
 
+    // the session moved on (you answered in its window, or it continues): a waiting answer is not needed any more
+    const movedOn = () => { s.permission = null; this.release(key, 'permission'); };
     switch (name) {
       case 'UserPromptSubmit':
+        movedOn();
+        this.release(key, 'reply'); // you typed in its window instead
         s.prompt = oneLine(ev.prompt || ev.user_prompt || '', 200);
         s.summary = '';
         s.turnStartedAt = now;
         this.setWorking(s, 'Thinking');
         break;
       case 'PreToolUse': {
+        // (an open question stays open here: parallel tool calls can start while one waits for you)
         const tool = ev.tool_name || '', input = ev.tool_input || {};
-        if (tool === 'AskUserQuestion') this.toWaiting(s, 'needs_you', questionText(input) || 'Has a question for you');
-        else if (tool === 'ExitPlanMode') this.toWaiting(s, 'needs_you', 'A plan is ready for you to review');
-        else this.setWorking(s, describeTool(tool, input));
+        if (tool === 'AskUserQuestion' || tool === 'ExitPlanMode') this.toWaiting(s, 'needs_you', askFor(ev));
+        else if (s.state !== 'needs_you') this.setWorking(s, describeTool(tool, input));
         break;
       }
       case 'PostToolUse':
       case 'PostToolUseFailure':
         // after you approved or answered, it carries on
+        movedOn();
         if (s.state !== 'working') this.setWorking(s, s.doing);
         break;
       case 'Notification': {
         const msg = String(ev.message || ''), type = String(ev.notification_type || '');
-        if (/permission|approv/i.test(type + ' ' + msg) || /elicitation|needs_input|question/i.test(type))
-          this.toWaiting(s, 'needs_you', oneLine(msg, 140) || 'Waiting for your approval');
-        // "waiting for your input" after a finished turn changes nothing: that turn already shows as done
+        const asks = /permission|approv/i.test(type + ' ' + msg) || /elicitation|needs_input|question/i.test(type);
+        // a permission request already said what it needs; "waiting for your input" after a finished turn changes nothing
+        if (asks && s.state !== 'needs_you') this.toWaiting(s, 'needs_you', oneLine(msg, 140) || 'Waiting for your approval');
         break;
       }
       case 'PermissionRequest':
-        this.toWaiting(s, 'needs_you', permissionText(ev));
+        s.permission = { tool: ev.tool_name || '', input: ev.tool_input || {} };
+        this.toWaiting(s, 'needs_you', askFor(ev));
         break;
       case 'Stop':
+        movedOn();
         s.summary = oneLine(meta.summary || ev.last_assistant_message || '', 220);
         s.doing = '';
         this.toWaiting(s, 'done');
         break;
     }
     this.changed();
+  }
+
+  // ---------- answering from the island ----------
+  /**
+   * A hook waits for you: kind 'permission' (a permission prompt, a question, a plan) or 'reply' (after the
+   * session stopped). Resolves with what the hook should pass back to Claude Code, or '' for nothing.
+   */
+  waitFor(key, kind, ms) {
+    this.release(key, kind); // a newer question replaces an older one
+    const token = Symbol(kind);
+    let resolve;
+    const promise = new Promise(r => (resolve = r));
+    const timer = setTimeout(() => this.release(key, kind, '', token), ms);
+    this.waiters.set(`${key}#${kind}`, { resolve, timer, token });
+    this.emit('change');
+    return { promise, token };
+  }
+
+  /** Ends a wait (only that one, when a token is given). */
+  release(key, kind, body = '', token = null) {
+    const id = `${key}#${kind}`, w = this.waiters.get(id);
+    if (!w || (token && w.token !== token)) return false;
+    this.waiters.delete(id);
+    clearTimeout(w.timer);
+    w.resolve(body);
+    this.emit('change');
+    return true;
+  }
+
+  /** Your answer from the island: allow / deny a permission, the answers to its questions, or a verdict on its plan. */
+  answer(key, choice = {}) {
+    const s = this.sessions.get(key);
+    if (!s?.permission || !this.waiters.has(`${key}#permission`)) throw new Error('This question is not open any more: maybe you answered it in its window.');
+    const { tool, input } = s.permission;
+    let decision;
+    if (choice.type === 'answers') decision = { behavior: 'allow', updatedInput: { ...input, answers: choice.answers || {} } };
+    else if (choice.type === 'plan') {
+      decision = choice.approve ? { behavior: 'allow' } : {
+        behavior: 'deny',
+        message: choice.note ? `The user wants changes to the plan: ${choice.note}` : 'The user wants to keep planning. Ask what should change.',
+      };
+    } else if (choice.type === 'deny') decision = { behavior: 'deny', message: choice.note || 'The user said no from Island.' };
+    else decision = { behavior: 'allow' };
+    this.release(key, 'permission', JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }));
+    s.permission = null;
+    this.setWorking(s, decision.behavior === 'allow' && tool !== 'AskUserQuestion' && tool !== 'ExitPlanMode' ? describeTool(tool, input) : 'Thinking');
+    this.changed();
+  }
+
+  /** Your reply to a finished session, typed in the island: Claude carries on with it. */
+  reply(key, text) {
+    const s = this.sessions.get(key), t = String(text || '').trim();
+    if (!t) return;
+    if (!s || !this.waiters.has(`${key}#reply`)) throw new Error('This session cannot take a reply from Island right now: reply in its window instead.');
+    this.release(key, 'reply', JSON.stringify({ reply: t }));
+    s.prompt = oneLine(t, 200);
+    s.summary = '';
+    s.turnStartedAt = Date.now();
+    this.setWorking(s, 'Thinking');
+    this.changed();
+  }
+
+  // ---------- projects (for the quick prompt) ----------
+  rememberProject(s) {
+    if (s.src === 'web' || !s.cwd) return;
+    const id = `${s.src}|${s.host || ''}|${s.cwd}`;
+    this.projects.set(id, { id, src: s.src, host: s.host || '', distro: s.distro || '', cwd: s.cwd, project: s.project, usedAt: Date.now() });
+    if (this.projects.size > 60) {
+      const oldest = [...this.projects.values()].sort((a, b) => a.usedAt - b.usedAt)[0];
+      this.projects.delete(oldest.id);
+    }
+  }
+
+  projectList() {
+    return [...this.projects.values()].sort((a, b) => b.usedAt - a.usedAt);
   }
 
   // ---------- events from the browser extension ----------
@@ -281,6 +383,17 @@ class Hub extends EventEmitter {
     if (waiting.length) this.emit('notify', { kind: 'back', sessions: waiting });
   }
 
+  /** While you focus, reminders wait; when your focus time ends, one summary of what happened meanwhile. */
+  hold(on) {
+    if (on === this.holding) return;
+    this.holding = on;
+    if (on) return;
+    const waiting = [...this.sessions.values()].filter(s => this.waiting(s) && !s.muted);
+    const next = Date.now() + this.settings().remindAfterMin * MIN;
+    for (const s of waiting) s.nextReminderAt = Math.max(s.nextReminderAt || 0, next);
+    if (waiting.length) this.emit('notify', { kind: 'focus', sessions: waiting });
+  }
+
   act(key, action, arg) {
     const s = this.sessions.get(key);
     if (!s) return;
@@ -316,7 +429,7 @@ class Hub extends EventEmitter {
       // a chat tab that stopped reporting (browser closed, extension reloaded) is not writing any more
       else if (s.src === 'web' && s.state === 'working' && now - s.updatedAt > 5 * MIN) { s.state = 'idle'; s.doing = ''; s.since = now; dirty = true; }
     }
-    if (!this.away) {
+    if (!this.away && !this.holding) {
       const due = [];
       for (const s of this.sessions.values()) {
         if (!this.waiting(s) || s.muted || (s.snoozedUntil || 0) > now || this.isLookingAt(s)) continue;
@@ -332,7 +445,16 @@ class Hub extends EventEmitter {
   }
 
   view() {
-    return { sessions: [...this.sessions.values()].map(s => ({ ...s, waiting: this.waiting(s) })), usage: this.usage, away: this.away };
+    return {
+      sessions: [...this.sessions.values()].map(s => ({
+        ...s,
+        waiting: this.waiting(s),
+        canAnswer: !!s.permission && this.waiters.has(`${s.key}#permission`),
+        canReply: s.state === 'done' && this.waiters.has(`${s.key}#reply`),
+      })),
+      usage: this.usage,
+      away: this.away,
+    };
   }
 }
 

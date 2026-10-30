@@ -12,6 +12,7 @@ import sys
 HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.island')
 HOOK = os.path.join(DIR, 'hook.sh')
+REPLY = os.path.join(DIR, 'reply.sh')
 STATUS = os.path.join(DIR, 'statusline.sh')
 ORIGINAL = os.path.join(DIR, 'statusline-original')
 CODEX_HOME = os.environ.get('CODEX_HOME') or os.path.join(HOME, '.codex')
@@ -24,7 +25,8 @@ TARGETS = {
 
 
 def ours(hook):
-    return isinstance(hook, dict) and '/.island/hook.sh' in str(hook.get('command', ''))
+    command = str(hook.get('command', '')) if isinstance(hook, dict) else ''
+    return '/.island/hook.sh' in command or '/.island/reply.sh' in command
 
 
 def ours_status(line):
@@ -86,6 +88,10 @@ def install(agent, if_present):
     for event in events:
         hooks.setdefault(event, []).append({'hooks': [{'type': 'command', 'command': f'bash "{HOOK}" {agent}', 'timeout': 5}]})
     if agent == 'claude':
+        # answering from the island: a permission prompt waits for your answer there (the terminal can still answer),
+        # and after Claude stops, a background hook waits for a reply you type in the island
+        hooks.setdefault('PermissionRequest', []).append({'hooks': [{'type': 'command', 'command': f'bash "{HOOK}" claude wait', 'timeout': 1800}]})
+        hooks['Stop'].append({'hooks': [{'type': 'command', 'command': f'bash "{REPLY}"', 'asyncRewake': True, 'timeout': 10800}]})
         current = data.get('statusLine')
         if isinstance(current, dict) and current.get('command') and not ours_status(current):
             with open(ORIGINAL, 'w') as f:

@@ -15,6 +15,15 @@ const DEFAULTS = {
   hideInFullscreen: true, // videos, games, presentations
   startWithWindows: false,
   limitsFromLogin: true, // ask Anthropic for your limits with your Claude login (limits.js)
+  answerFromIsland: true, // answer permission prompts, questions and plans, and reply to finished sessions, in the island
+  clipboardHistory: true, // keep what you copy (clips.js); private copies from password managers never
+  showMedia: true, // the song in the closed island while it plays
+  visualizer: true, // the bars that follow how loud your speakers play
+  meetings: true, // your next meeting from classic Outlook (while it runs)
+  focusHolds: true, // reminders and sounds wait while you focus
+  mascot: true, // Robo, the face at the left of the island
+  translateTo: 'English', // Ctrl+Alt+T translates into this language…
+  translateAlt: 'Azerbaijani', // …or into this one when the text is already in the first
   displays: [], // the displays (ids) that show an island; none chosen = the main display (islands.js)
   sshServers: [], // servers you connected: Island keeps a tunnel open to each (set by Connect, not by hand)
 };

@@ -30,7 +30,7 @@ class Helper extends EventEmitter {
       if (m.type === 'reply') {
         const p = this.pending.get(m.id);
         if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.resolve(m.result || {}); }
-      } else if (m.type === 'foreground') this.emit('foreground', m);
+      } else if (m.type) this.emit(m.type, m); // foreground, clipboard, media, volume, mic, level
     });
     child.on('exit', () => {
       this.child = null;

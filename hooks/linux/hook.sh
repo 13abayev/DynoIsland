@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Island hook: sends a Claude Code / Codex event to the Island app on your Windows PC.
 # Island installs this into ~/.island/ (in WSL, or on an SSH server) and adds it to the agent's hooks:
-#   bash ~/.island/hook.sh claude|codex      (the event comes in as JSON on stdin)
+#   bash ~/.island/hook.sh claude|codex        the event comes in as JSON on stdin
+#   bash ~/.island/hook.sh claude wait         a permission prompt: waits for your answer in the island and
+#                                              prints it for Claude Code (nothing, if you answer in the terminal)
 # In WSL it uses Windows' own curl.exe, which reaches Island on 127.0.0.1 directly.
-# On an SSH server, 127.0.0.1:<port> is the tunnel your SSH connection opens back to your PC.
-# It always exits 0 and prints nothing, so it can never block or change what the agent does.
+# On an SSH server, 127.0.0.1:<port> is the tunnel Island keeps open back to your PC.
+# It always exits 0, and only prints an answer you gave in the island, so it never blocks or changes anything else.
 dir="$HOME/.island"
 agent="${1:-claude}"
+mode="${2:-}"
 payload=$(cat)
 token=$(cat "$dir/token" 2>/dev/null) || exit 0
 src=$(cat "$dir/src" 2>/dev/null || echo ssh)
@@ -21,10 +24,18 @@ if command -v python3 >/dev/null 2>&1; then
   { read -r branch; read -r summary; } < <(printf '%s' "$payload" | python3 "$dir/info.py" 2>/dev/null)
 fi
 
-printf '%s' "$payload" | "$curl" -s -m 2 -X POST \
-  -H "Content-Type: application/json" -H "X-Island-Token: $token" -H "X-Island-Agent: $agent" \
-  -H "X-Island-Src: $src" -H "X-Island-Host: ${HOSTNAME:-$(uname -n)}" -H "X-Island-Alias: $alias" \
-  -H "X-Island-Distro: ${WSL_DISTRO_NAME:-}" -H "X-Island-Term: ${TERM_PROGRAM:-}" \
-  -H "X-Island-Entry: ${CLAUDE_CODE_ENTRYPOINT:-}" -H "X-Island-Branch: $branch" -H "X-Island-Summary: $summary" \
-  --data-binary @- "http://127.0.0.1:$port/hook" >/dev/null 2>&1
+headers=(-H "Content-Type: application/json" -H "X-Island-Token: $token" -H "X-Island-Agent: $agent"
+  -H "X-Island-Src: $src" -H "X-Island-Host: ${HOSTNAME:-$(uname -n)}" -H "X-Island-Alias: $alias"
+  -H "X-Island-Distro: ${WSL_DISTRO_NAME:-}" -H "X-Island-Term: ${TERM_PROGRAM:-}"
+  -H "X-Island-Entry: ${CLAUDE_CODE_ENTRYPOINT:-}" -H "X-Island-Branch: $branch" -H "X-Island-Summary: $summary")
+
+if [ "$mode" = wait ]; then
+  answer=$(printf '%s' "$payload" | "$curl" -s -m 1800 -X POST "${headers[@]}" --data-binary @- \
+    "http://127.0.0.1:$port/hook?wait=1" 2>/dev/null | tr -d '\r')
+  case "$answer" in *hookSpecificOutput*) printf '%s\n' "$answer" ;; esac
+  exit 0
+fi
+
+printf '%s' "$payload" | "$curl" -s -m 2 -X POST "${headers[@]}" --data-binary @- \
+  "http://127.0.0.1:$port/hook" >/dev/null 2>&1
 exit 0

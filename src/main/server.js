@@ -8,7 +8,10 @@ const { WebSocketServer } = require('ws');
 
 const PORT = 47900;
 
-function startServer({ hub, token, onExtChange, onJump, debug }) {
+const ANSWER_WAIT = 25 * 60 * 1000; // a permission prompt waits this long for your answer in the island
+const REPLY_WAIT = 3 * 60 * 60 * 1000; // a finished session waits this long for your reply
+
+function startServer({ hub, token, settings, onExtChange, onJump, debug }) {
   const expected = Buffer.from(token);
   const okToken = v => {
     const given = Buffer.from(String(v || ''));
@@ -47,18 +50,42 @@ function startServer({ hub, token, onExtChange, onJump, debug }) {
     let data = {};
     try { data = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, {}); }
     if (url.pathname === '/hook') {
-      res.writeHead(204).end(); // answer first: the hook must not wait for Island
-      hub.hookEvent(meta(req.headers), data);
+      const m = meta(req.headers);
+      const key = hub.sessionKey(m, data);
+      const wait = url.searchParams.get('wait') === '1' && key && settings().answerFromIsland;
+      if (!wait) res.writeHead(204).end(); // answer first: the hook must not wait for Island
+      hub.hookEvent(m, data);
+      // a permission prompt waits here for your answer in the island; the terminal can still answer it meanwhile
+      if (wait) await holdFor(res, key, 'permission', ANSWER_WAIT);
+    } else if (url.pathname === '/reply-wait') {
+      const key = hub.sessionKey(meta(req.headers), data);
+      if (!key || !settings().answerFromIsland) return json(res, 200, {});
+      await holdFor(res, key, 'reply', REPLY_WAIT);
     } else if (url.pathname === '/status') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(hub.setUsage(data));
     } else if (url.pathname === '/debug/jump') {
       await onJump(String(data.key || '')); // the same as clicking a session in the island (for testing)
       json(res, 200, { ok: true });
+    } else if (url.pathname === '/debug/answer' || url.pathname === '/debug/reply') {
+      // the same as answering or replying in the island (for testing)
+      try {
+        if (url.pathname === '/debug/answer') hub.answer(String(data.key || ''), data.choice || {});
+        else hub.reply(String(data.key || ''), String(data.text || ''));
+        json(res, 200, { ok: true });
+      } catch (e) { json(res, 200, { ok: false, error: e.message }); }
     } else if (url.pathname === '/debug/identify') {
       debug.identify(); // the same as "Identify displays" in settings (for testing)
       json(res, 200, { ok: true });
     } else json(res, 404, {});
   });
+
+  /** Keeps a hook's request open until you answer in the island (or it is not needed any more), then answers it. */
+  async function holdFor(res, key, kind, ms) {
+    const { promise, token } = hub.waitFor(key, kind, ms);
+    res.on('close', () => hub.release(key, kind, '', token)); // the hook was stopped: you answered in the terminal
+    const body = await promise;
+    if (!res.writableEnded) res.writeHead(200, { 'content-type': 'application/json' }).end(body || '{}');
+  }
 
   // ---- the browser extension ----
   const exts = new Set();

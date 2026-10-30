@@ -5,12 +5,29 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
 <title>Island</title>
 <link rel="stylesheet" href="island.css">
+<link rel="stylesheet" href="parts.css">
 </head>
 <body>
 <div id="island">
   <div id="bar"></div>
-  <div id="body"></div>
+  <div id="panel">
+    <div id="cards"></div>
+    <div id="tabs"></div>
+    <div id="body"></div>
+  </div>
 </div>
+<!-- core first, then the parts (each registers its pages, cards and bar items), then the island itself -->
+<script src="core.js"></script>
+<script src="sessions-ui.js"></script>
+<script src="prompt-ui.js"></script>
+<script src="clipboard-ui.js"></script>
+<script src="notes-ui.js"></script>
+<script src="focus-ui.js"></script>
+<script src="media-ui.js"></script>
+<script src="meeting-ui.js"></script>
+<script src="translate-ui.js"></script>
+<script src="mascot-ui.js"></script>
+<script src="settings-ui.js"></script>
 <script src="island.js"></script>
 </body>
 </html>

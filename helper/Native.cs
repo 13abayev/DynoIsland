@@ -17,7 +17,13 @@ static class Native
     public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct INPUT { public uint type; public MOUSEINPUT mi; }
+    public struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT { public uint type; public InputUnion u; }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct PROCESSENTRY32
@@ -47,6 +53,17 @@ static class Native
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr p);
     [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterClipboardFormat(string name);
+    [DllImport("user32.dll")] public static extern bool IsClipboardFormatAvailable(uint format);
+    [DllImport("user32.dll")] public static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] public static extern bool CloseClipboard();
+    [DllImport("user32.dll")] public static extern IntPtr GetClipboardData(uint format);
+    [DllImport("kernel32.dll")] public static extern IntPtr GlobalLock(IntPtr mem);
+    [DllImport("kernel32.dll")] public static extern bool GlobalUnlock(IntPtr mem);
+    [DllImport("ole32.dll", CharSet = CharSet.Unicode)] public static extern int CLSIDFromProgID(string progId, out Guid clsid);
+    [DllImport("oleaut32.dll")] public static extern int GetActiveObject(ref Guid clsid, IntPtr reserved, [MarshalAs(UnmanagedType.IUnknown)] out object obj);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
     [DllImport("kernel32.dll")] public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32 e);
@@ -54,7 +71,7 @@ static class Native
     [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
 }
 
-static class Windows
+static class Wnd
 {
     const uint GW_OWNER = 4;
     const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, DWMWA_CLOAKED = 14;

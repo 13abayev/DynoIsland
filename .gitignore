@@ -3,3 +3,4 @@ bin/
 helper/bin/
 helper/obj/
 .claude/
+__pycache__/

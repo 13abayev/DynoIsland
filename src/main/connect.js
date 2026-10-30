@@ -57,7 +57,11 @@ function windowsConnect(on) {
   if (on) {
     if (!fs.existsSync(HELPER)) throw new Error('The helper is not built yet: run "bash tools/setup.sh" in WSL first.');
     s.hooks = s.hooks || {};
-    for (const event of CLAUDE_EVENTS) (s.hooks[event] = s.hooks[event] || []).push({ hooks: [{ type: 'command', command: `${RUN_HELPER} hook claude`, timeout: 5 }] });
+    const add = (event, hook) => (s.hooks[event] = s.hooks[event] || []).push({ hooks: [{ type: 'command', ...hook }] });
+    for (const event of CLAUDE_EVENTS) add(event, { command: `${RUN_HELPER} hook claude`, timeout: 5 });
+    // answering from the island: permission prompts wait for your answer there, finished sessions for your reply
+    add('PermissionRequest', { command: `${RUN_HELPER} hook claude wait`, timeout: 1800 });
+    add('Stop', { command: `${RUN_HELPER} reply claude`, asyncRewake: true, timeout: 10800 });
     if (!s.statusLine) s.statusLine = { type: 'command', command: `${RUN_HELPER} statusline claude` };
   } else if (isOurs(s.statusLine)) delete s.statusLine;
   writeFileKeepingBackup(file, JSON.stringify(s, null, 2) + '\n');
@@ -84,10 +88,13 @@ const ssh = (alias, script) => run('ssh', ['-o', 'BatchMode=yes', '-o', 'Connect
 /** A script that puts Island's files into ~/.island/ and then runs merge.py with `actions`. */
 function linuxInstallScript({ src, alias, token, actions }) {
   const read = f => fs.readFileSync(path.join(LINUX, f), 'utf8').replace(/\r\n/g, '\n');
-  const files = { 'hook.sh': read('hook.sh'), 'statusline.sh': read('statusline.sh'), 'info.py': read('info.py'), 'merge.py': read('merge.py'), token, src, port: String(PORT), alias: alias || '' };
+  const files = {
+    'hook.sh': read('hook.sh'), 'reply.sh': read('reply.sh'), 'statusline.sh': read('statusline.sh'), 'info.py': read('info.py'),
+    'merge.py': read('merge.py'), token, src, port: String(PORT), alias: alias || '',
+  };
   const lines = ['set -e', 'mkdir -p "$HOME/.island"', 'chmod 700 "$HOME/.island"', 'cd "$HOME/.island"'];
   for (const [name, content] of Object.entries(files)) lines.push(`echo '${Buffer.from(content).toString('base64')}' | base64 -d > '${name}'`);
-  lines.push('chmod 600 token', 'chmod 755 hook.sh statusline.sh');
+  lines.push('chmod 600 token', 'chmod 755 hook.sh reply.sh statusline.sh');
   lines.push('command -v python3 >/dev/null || { echo "ISLAND-ERROR: python3 is not installed here"; exit 3; }');
   for (const a of actions) lines.push(`python3 merge.py ${a}`);
   return lines.join('\n') + '\n';

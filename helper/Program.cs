@@ -2,10 +2,12 @@ using System.Text;
 
 namespace Island;
 
-// Island's Windows helper, run as "dotnet IslandHelper.dll <job>". One small program, three jobs:
+// Island's Windows helper, run as "dotnet IslandHelper.dll <job>". One small program, these jobs:
 //   serve               runs while Island runs: reports the window in front, finds and focuses windows
 //                       (one JSON object per line on stdin/stdout)
-//   hook <agent>        a Claude Code / Codex hook on Windows: forwards the event to Island, plus the window it runs in
+//   hook <agent> [wait] a Claude Code / Codex hook on Windows: forwards the event to Island, plus the window it runs in;
+//                       with "wait" (a permission prompt) it waits for your answer in the island and prints it
+//   reply <agent>       a background Stop hook: waits for a reply you type in the island (exit code 2 passes it on)
 //   statusline <agent>  Claude Code's status line on Windows: forwards your usage limits to Island, prints a short line
 static class Program
 {
@@ -20,7 +22,8 @@ static class Program
             return mode switch
             {
                 "serve" => Serve.Run(),
-                "hook" => Hook.Run(agent),
+                "hook" => Hook.Run(agent, args.Length > 2 && args[2] == "wait"),
+                "reply" => Reply.Run(agent),
                 "statusline" => StatusLine.Run(agent),
                 _ => 2,
             };

@@ -4,19 +4,23 @@
     Island's Windows helper. It is built as a plain .NET library (IslandHelper.dll) and started with
     Microsoft's own dotnet.exe: Smart App Control blocks unsigned .exe files it has never seen, and a
     program built on your own PC is always new. Runs on the .NET 9 runtime or any newer one.
+    The Windows target gives it Windows' own APIs: media controls, text recognition (OCR).
+    EnableWindowsTargeting lets it build from WSL.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RollForward>LatestMajor</RollForward>
     <UseAppHost>false</UseAppHost>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>IslandHelper</AssemblyName>
     <RootNamespace>Island</RootNamespace>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
+    <!-- the meeting search hands Outlook dates in your own date format, so keep Windows' regional settings -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
 </Project>
