@@ -1,0 +1,3 @@
+# Scripts that run in WSL or on Linux servers must keep Linux line endings, also when checked out on Windows
+*.sh text eol=lf
+*.py text eol=lf

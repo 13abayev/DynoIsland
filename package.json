@@ -1,0 +1,17 @@
+{
+  "name": "island",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Dynamic Island for Windows: all your AI sessions in one place, with reminders.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "setup": "bash tools/setup.sh",
+    "build:helper": "bash tools/build-helper.sh"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "electron": "45.1.0"
+  }
+}

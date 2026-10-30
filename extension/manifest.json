@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Island for ChatGPT and Claude",
+  "version": "0.1.1",
+  "description": "Tells the Island app on this PC when a ChatGPT or Claude chat is answering, is done, or waits for you.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*", "https://claude.ai/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://chatgpt.com/*", "https://claude.ai/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ],
+  "action": { "default_title": "Island", "default_popup": "options.html" },
+  "options_page": "options.html"
+}

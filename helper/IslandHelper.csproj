@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Island's Windows helper. It is built as a plain .NET library (IslandHelper.dll) and started with
+    Microsoft's own dotnet.exe: Smart App Control blocks unsigned .exe files it has never seen, and a
+    program built on your own PC is always new. Runs on the .NET 9 runtime or any newer one.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>IslandHelper</AssemblyName>
+    <RootNamespace>Island</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+</Project>
