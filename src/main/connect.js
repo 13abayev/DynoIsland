@@ -90,13 +90,14 @@ function linuxInstallScript({ src, alias, token, actions }) {
   const read = f => fs.readFileSync(path.join(LINUX, f), 'utf8').replace(/\r\n/g, '\n');
   const files = {
     'hook.sh': read('hook.sh'), 'reply.sh': read('reply.sh'), 'statusline.sh': read('statusline.sh'), 'info.py': read('info.py'),
-    'merge.py': read('merge.py'), token, src, port: String(PORT), alias: alias || '',
+    'merge.py': read('merge.py'), 'island.py': read('island.py'), token, src, port: String(PORT), alias: alias || '',
   };
   const lines = ['set -e', 'mkdir -p "$HOME/.island"', 'chmod 700 "$HOME/.island"', 'cd "$HOME/.island"'];
   for (const [name, content] of Object.entries(files)) lines.push(`echo '${Buffer.from(content).toString('base64')}' | base64 -d > '${name}'`);
-  lines.push('chmod 600 token', 'chmod 755 hook.sh reply.sh statusline.sh');
+  lines.push('chmod 600 token', 'chmod 755 hook.sh reply.sh statusline.sh island.py');
   lines.push('command -v python3 >/dev/null || { echo "ISLAND-ERROR: python3 is not installed here"; exit 3; }');
-  for (const a of actions) lines.push(`python3 merge.py ${a}`);
+  // the "island" command (island run -- …) comes along with every connection
+  for (const a of [...actions, 'cli on']) lines.push(`python3 merge.py ${a}`);
   return lines.join('\n') + '\n';
 }
 
@@ -173,7 +174,7 @@ async function connect(target, on, arg, token) {
   if (target === 'windows') windowsConnect(on);
   else if (target === 'wsl-claude' || target === 'wsl-codex') {
     const agent = target.slice(4);
-    const script = on ? linuxInstallScript({ src: 'wsl', token, actions: [`install ${agent}`] }) : linuxScript([`uninstall ${agent}`]);
+    const script = on ? linuxInstallScript({ src: 'wsl', token, actions: [`install ${agent}`] }) : linuxScript([`uninstall ${agent}`, 'cli off --if-unused']);
     parseResult(await wsl(script), 'WSL');
   } else if (target === 'ssh') {
     const alias = String(arg || '');
@@ -183,7 +184,7 @@ async function connect(target, on, arg, token) {
       if (r.code === 255) throw new Error(`Could not log in to ${alias} without a password. Connect once from VS Code or a terminal, then try again.`);
       parseResult(r, alias);
     } else {
-      const r = await ssh(alias, linuxScript(['uninstall claude', 'uninstall codex']));
+      const r = await ssh(alias, linuxScript(['uninstall claude', 'uninstall codex', 'cli off']));
       if (r.code !== 0) throw new Error(`${alias} could not be reached to remove Island's hooks there. Island stopped its tunnel, so they can do no harm.`);
     }
   } else throw new Error('Unknown connection.');

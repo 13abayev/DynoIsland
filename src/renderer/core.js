@@ -5,20 +5,23 @@
 //   ui.pages   id → { label, tab, order, render(), click(e), change(e), keydown(e), opened() }
 //              a page of the open island; pages with a label and tab: true get a tab
 //   ui.cards   () → html, shown above the pages of the open island (now playing, next meeting, …)
-//   ui.bar     () → { priority, html, cls } what the closed island can show; the highest priority wins
+//   ui.sections () → html, extra sections at the top of the Sessions page (your jobs, …)
+//   ui.bar     () → { priority, lead, text, chips, cls, mood, keepLead } what the closed island can show; the
+//              highest priority wins (keepLead: its own lead stays, instead of the mascot)
 //   ui.right   () → html, small things at the right of the bar (limits rings, the mic dot, …)
 //   ui.settings () → html, extra sections of the settings page (from the parts that have settings)
 //   ui.barClick (e) → handled?  clicks on buttons in the bar (the mic dot, …)
 //   ui.input   (e) → handled?  input events (a volume slider, …)
 //   ui.lead    (mood) → html, replaces the dot at the left of the bar (the mascot); mood comes from the bar item
 //   ui.drafts  what you type in fields marked data-draft="…", kept when the island redraws
-// Anything marked data-ends="<ms>" shows the time left until then, updated every second.
+// Anything marked data-ends="<ms>" shows the time left until then, data-since="<ms>" the minutes:seconds since
+// then and data-elapsed="<ms>" how long since then ("2h 13m"), updated every second.
 
 // The bridge (preload.js). Opened in a normal browser (index.html?demo) the island shows made-up data.
 const api = window.islandApi || demoApi();
 const $ = id => document.getElementById(id);
 
-const ui = { pages: {}, cards: [], bar: [], right: [], settings: [], barClick: [], input: [], lead: null, drafts: {} };
+const ui = { pages: {}, cards: [], sections: [], bar: [], right: [], settings: [], barClick: [], input: [], lead: null, drafts: {} };
 
 /** A settings row with a checkbox for one of Island's settings. */
 const settingCheck = (key, label, desc) =>
@@ -48,6 +51,8 @@ function when(t) {
 }
 /** "12:05" for minutes:seconds of a countdown. */
 const clock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+/** How long something has run: "12:05", then "2h 13m". */
+const duration = ms => (ms < 3600e3 ? clock(ms) : `${Math.floor(ms / 3600e3)}h ${Math.floor((ms % 3600e3) / 60e3)}m`);
 
 const ICON = {
   claude: '<svg viewBox="0 0 16 16"><path fill="var(--claude)" d="M8 1.2l1.1 4 3.8-1.7-2.5 3.3L14.6 8l-4.2.6 1.7 3.8-3.3-2.6L8 14.8l-.8-5-3.3 2.6 1.7-3.8L1.4 8l4.2-1.2-2.5-3.3 3.8 1.7z"/></svg>',
@@ -70,6 +75,13 @@ const ICON = {
   mic: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="5.8" y="2" width="4.4" height="7.6" rx="2.2"/><path d="M3.5 7.6a4.5 4.5 0 0 0 9 0M8 12.1V14"/></svg>',
   micOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10.2 6.3V4.2a2.2 2.2 0 0 0-4.3-.7M5.8 6.5v1.1a2.2 2.2 0 0 0 3.4 1.8M3.5 7.6a4.5 4.5 0 0 0 7.6 3.2M12.5 7.6c0 .5-.1 1-.2 1.4M8 12.1V14M2.5 2.5l11 11"/></svg>',
   volume: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6v4h2.6L8.5 13V3L5.1 6z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4"/></svg>',
+  volumeOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6v4h2.6L8.5 13V3L5.1 6z"/><path d="m11 6 3.5 4m0-4L11 10"/></svg>',
+  sun: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5 3.4 3.4"/></svg>',
+  terminal: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><path d="m4.6 6.3 2.2 1.9-2.2 1.9M8.6 10.3h2.8"/></svg>',
+  phone: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4.2" y="1.6" width="7.6" height="12.8" rx="1.8"/><path d="M7 12h2"/></svg>',
+  server: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2.5" width="12" height="4.6" rx="1.3"/><rect x="2" y="8.9" width="12" height="4.6" rx="1.3"/><path d="M4.6 4.8h.1M4.6 11.2h.1"/></svg>',
+  shelf: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5h3l1 1.8h4l1-1.8h3"/><path d="M2 9.5 3.6 4a1 1 0 0 1 1-.8h6.8a1 1 0 0 1 1 .8L14 9.5V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>',
+  folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.3c0-.7.5-1.2 1.2-1.2h3l1.4 1.6h5.2c.7 0 1.2.5 1.2 1.2v6c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2z"/></svg>',
 };
 const agentIcon = a => (a === 'codex' ? ICON.codex : a === 'chatgpt' ? ICON.chatgpt : ICON.claude);
 
@@ -93,7 +105,7 @@ function demoApi() {
     settings: {
       remindAfterMin: 5, repeatEveryMin: 15, maxReminders: 3, sound: 'stuck', toasts: true, hideInFullscreen: true, startWithWindows: false,
       limitsFromLogin: true, answerFromIsland: true, clipboardHistory: true, showMedia: true, visualizer: true, meetings: true,
-      focusHolds: true, mascot: true, translateTo: 'English', translateAlt: 'Azerbaijani',
+      focusHolds: true, mascot: true, hud: true, translateTo: 'English', translateAlt: 'Azerbaijani',
     },
     hotkeys: { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' },
     media: { has: true, title: 'Lost in the Fire', artist: 'Gesaffelstein', app: 'Spotify', playing: true, position: 42, duration: 202, positionAt: now, canNext: true, canPrev: true, cover: '' },
@@ -103,7 +115,19 @@ function demoApi() {
     meetings: [{ subject: 'Standup', start: new Date(now + 8 * m).toISOString(), end: new Date(now + 23 * m).toISOString(), join: 'https://teams.microsoft.com/l/meetup-join/demo' }],
     timers: [{ id: 't1', label: 'Tea', minutes: 5, ends: now + 4 * m }],
     focus: null,
+    jobs: [
+      { id: 'j1', name: 'train.py', src: 'ssh', host: 'gpu-server', state: 'running', started: now - 83 * m, heard: now, percent: 24, last: 'Epoch 12/50 | loss 0.412 | val_wer 9.1%', cmd: 'python train.py --config conf/base.yaml', cwd: '/home/you/research/ml-research' },
+      { id: 'j2', name: 'eval.sh', src: 'wsl', state: 'failed', exit: 1, started: now - 9 * m, ended: now - 2 * m, seen: false, cmd: 'bash eval.sh runs/0412', tail: ['Traceback (most recent call last):', '  File "eval.py", line 88, in <module>', 'FileNotFoundError: runs/0412/ckpt-40000.pt'] },
+    ],
+    phone: { configured: true, paired: true, bot: 'my_island_bot', name: 'You' },
   };
+  demo.settings.sshServers = ['gpu-server', 'build-box'];
+  demo.settings.serverDirs = { 'gpu-server': '~/data' };
+  const demoShelf = [
+    { id: 's1', path: 'C:\\Users\\you\\Downloads\\From phone\\photo-2026-10-30.jpg', name: 'photo-2026-10-30.jpg', size: 2480000, at: now - 3 * m, from: 'phone', icon: '' },
+    { id: 's2', path: 'C:\\Users\\you\\Datasets\\dev-clean.tar.gz', name: 'dev-clean.tar.gz', size: 337000000, at: now - 20 * m, from: 'pc', icon: '', send: { to: 'gpu-server:~/data', state: 'sending', at: now - 40e3 } },
+    { id: 's3', path: 'C:\\Users\\you\\Documents\\Contract.pdf', name: 'Contract.pdf', size: 184000, at: now - 50 * m, from: 'pc', icon: '', send: { to: 'build-box:~/', state: 'sent', at: now - 45 * m } },
+  ];
   const listeners = {};
   const fire = (k, v) => (listeners[k] || []).forEach(cb => cb(v));
   document.documentElement.style.background = 'linear-gradient(135deg, #34465f, #6d5f86)'; // a stand-in desktop
@@ -140,6 +164,7 @@ function demoApi() {
         { id: 'c5', kind: 'text', text: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vLXVzZXIiLCJleHAiOjE3OTMzNzAwMDB9.sig', at: now - 5 * m },
       ],
     }),
+    shelf: async () => ({ shelf: demoShelf }),
     notes: async () => ({ text: 'Ask about the eval numbers', todos: [{ id: 'a', text: 'Review the web-shop PR', done: false }, { id: 'b', text: 'Reply to the client', done: true }] }),
   };
   // anything else the island asks for does nothing here; "on…" registers a listener

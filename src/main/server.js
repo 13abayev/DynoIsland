@@ -1,7 +1,8 @@
 'use strict';
 // Island's local server. Claude Code / Codex hooks post their events here (from Windows, from WSL through
-// Windows' curl.exe, and from SSH servers through the SSH tunnel), and the browser extension keeps a
-// WebSocket open. It only listens on 127.0.0.1 and only answers requests that carry your token.
+// Windows' curl.exe, and from SSH servers through the SSH tunnel), so does the island command (your jobs),
+// and the browser extension keeps a WebSocket open. It only listens on 127.0.0.1 and only answers requests
+// that carry your token.
 const crypto = require('crypto');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -11,7 +12,7 @@ const PORT = 47900;
 const ANSWER_WAIT = 25 * 60 * 1000; // a permission prompt waits this long for your answer in the island
 const REPLY_WAIT = 3 * 60 * 60 * 1000; // a finished session waits this long for your reply
 
-function startServer({ hub, token, settings, onExtChange, onJump, debug }) {
+function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug }) {
   const expected = Buffer.from(token);
   const okToken = v => {
     const given = Buffer.from(String(v || ''));
@@ -61,6 +62,12 @@ function startServer({ hub, token, settings, onExtChange, onJump, debug }) {
       const key = hub.sessionKey(meta(req.headers), data);
       if (!key || !settings().answerFromIsland) return json(res, 200, {});
       await holdFor(res, key, 'reply', REPLY_WAIT);
+    } else if (url.pathname === '/job') {
+      res.writeHead(204).end();
+      jobs.event(meta(req.headers), data); // island run / island progress, in WSL or on a server
+    } else if (url.pathname === '/notify') {
+      res.writeHead(204).end();
+      jobs.emit('message', { ...meta(req.headers), text: String(data.text || '').slice(0, 500) }); // island notify
     } else if (url.pathname === '/status') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(hub.setUsage(data));
     } else if (url.pathname === '/debug/jump') {
@@ -73,6 +80,8 @@ function startServer({ hub, token, settings, onExtChange, onJump, debug }) {
         else hub.reply(String(data.key || ''), String(data.text || ''));
         json(res, 200, { ok: true });
       } catch (e) { json(res, 200, { ok: false, error: e.message }); }
+    } else if (url.pathname === '/debug/shelf') {
+      json(res, 200, await debug.shelf(data)); // the same as dropping files on the island (for testing)
     } else if (url.pathname === '/debug/identify') {
       debug.identify(); // the same as "Identify displays" in settings (for testing)
       json(res, 200, { ok: true });

@@ -22,6 +22,8 @@ const DEFAULTS = {
   meetings: true, // your next meeting from classic Outlook (while it runs)
   focusHolds: true, // reminders and sounds wait while you focus
   mascot: true, // Robo, the face at the left of the island
+  hud: true, // the volume and brightness bar in the closed island when you change them
+  serverDirs: {}, // the folder on each server that files you drop on it go to (alias → folder)
   translateTo: 'English', // Ctrl+Alt+T translates into this language…
   translateAlt: 'Azerbaijani', // …or into this one when the text is already in the first
   displays: [], // the displays (ids) that show an island; none chosen = the main display (islands.js)

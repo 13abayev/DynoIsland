@@ -123,3 +123,66 @@
 @keyframes hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
 @keyframes bob { from { transform: rotate(-6deg); } to { transform: rotate(6deg); } }
 @keyframes zz { 0% { opacity: 0; transform: translate(0, 4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -4px); } }
+
+/* ---------- jobs (island run) ---------- */
+.st.bad, .dot.bad { background: var(--bad); }
+.row .line.bad { color: var(--bad); }
+.row.job .agent .lead-icon { color: var(--soft); }
+.lead-icon.job { color: var(--work); }
+.job-pct { flex: none; font-size: 11.5px; font-weight: 600; color: var(--work); font-variant-numeric: tabular-nums; }
+.job-left { flex: none; font-size: 11px; color: var(--dim); }
+.job-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .1); margin: 6px 0 2px; overflow: hidden; }
+.job-bar i { display: block; height: 100%; border-radius: 2px; background: var(--work); transition: width .6s ease; }
+.job-bar.unknown i { animation: slide 1.6s ease-in-out infinite; opacity: .7; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.job-details { margin-top: 6px; display: grid; gap: 4px; }
+.job-tail {
+  margin: 0; padding: 7px 9px; border-radius: 9px; background: #0b0b0d; color: var(--soft); font: 11px/1.45 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word; max-height: 110px; overflow: auto;
+}
+.mini-bar { width: 46px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .14); overflow: hidden; align-self: center; }
+.mini-bar i { display: block; height: 100%; background: var(--work); border-radius: 2px; transition: width .6s ease; }
+#bar .dim { color: var(--muted); font-weight: 500; }
+
+/* ---------- the volume and brightness bar ---------- */
+#bar .text.hud { display: flex; align-items: center; overflow: visible; }
+.hud-track { flex: 1; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .16); overflow: hidden; }
+.hud-fill { display: block; height: 100%; border-radius: 3px; background: var(--text); transition: width .14s ease-out; }
+.hud-icon { color: var(--text); }
+.hud-pct { min-width: 30px; text-align: right; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--soft); }
+
+/* ---------- the shelf ---------- */
+.shelf-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 12px; cursor: pointer; }
+.shelf-item:hover { background: var(--raise); }
+.shelf-item.gone { opacity: .5; cursor: default; }
+.shelf-icon { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; flex: none; }
+.shelf-icon.none { display: grid; place-items: center; background: var(--raise-2); color: var(--muted); }
+.shelf-icon.none svg { width: 17px; height: 17px; }
+.shelf-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.shelf-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shelf-send { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--work); }
+.shelf-send.ok { color: var(--done); }
+.shelf-send.bad { color: var(--bad); }
+.shelf-send svg { width: 12px; height: 12px; }
+.shelf-item .acts {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  display: none; gap: 4px; padding-left: 22px; background: linear-gradient(90deg, transparent, #131316 22px);
+}
+.shelf-item:hover .acts { display: flex; }
+.drop-zones { display: grid; gap: 8px; padding: 6px 2px 4px; }
+.drop-zone {
+  display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 14px;
+  border: 1.5px dashed rgba(255, 255, 255, .22); background: var(--raise); transition: background .12s, border-color .12s;
+}
+.drop-zone:first-child { padding: 22px 14px; }
+.drop-zone.over { border-color: var(--work); background: rgba(100, 210, 255, .12); }
+.drop-zone * { pointer-events: none; }
+.drop-icon { width: 30px; height: 30px; display: grid; place-items: center; color: var(--soft); flex: none; }
+.drop-icon svg { width: 22px; height: 22px; }
+.drop-title { font-weight: 600; }
+
+/* ---------- phone setup ---------- */
+.steps { margin: 2px 4px 6px 22px; padding: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.steps b, .hint b { color: var(--soft); }
+.code { font-family: ui-monospace, Consolas, monospace; color: var(--text); background: var(--raise-2); padding: 1px 5px; border-radius: 5px; }
+.section-link.tight { margin-left: 10px; }

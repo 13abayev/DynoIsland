@@ -1,9 +1,12 @@
 """Adds Island's hooks to Claude Code / Codex settings on this machine, or removes them again.
   python3 merge.py install claude|codex [--if-present]
   python3 merge.py uninstall claude|codex
+  python3 merge.py cli on|off [--if-unused]
   python3 merge.py status
-Prints {"claude": true/false, "codex": true/false}. Your own hooks and settings stay as they are; the first
-time a file is changed, a copy is kept next to it as <file>.island-backup."""
+The "island" command (island run / island progress) goes into ~/.island/bin, which a line in ~/.bashrc
+(and ~/.zshrc) puts on your PATH.
+Prints {"claude": true/false, "codex": true/false, "cli": true/false}. Your own hooks and settings stay as they
+are; the first time a file is changed, a copy is kept next to it as <file>.island-backup."""
 import json
 import os
 import shutil
@@ -15,6 +18,9 @@ HOOK = os.path.join(DIR, 'hook.sh')
 REPLY = os.path.join(DIR, 'reply.sh')
 STATUS = os.path.join(DIR, 'statusline.sh')
 ORIGINAL = os.path.join(DIR, 'statusline-original')
+BIN = os.path.join(DIR, 'bin')
+PATH_MARK = '# added by Island: the island command'
+PATH_LINE = 'case ":$PATH:" in *":$HOME/.island/bin:"*) ;; *) export PATH="$HOME/.island/bin:$PATH" ;; esac  ' + PATH_MARK
 CODEX_HOME = os.environ.get('CODEX_HOME') or os.path.join(HOME, '.codex')
 TARGETS = {
     'claude': (os.path.join(HOME, '.claude', 'settings.json'),
@@ -116,10 +122,40 @@ def uninstall(agent):
     write(path, data)
 
 
+def cli(on):
+    """The island command, and the line in your shell's startup file that finds it."""
+    target = os.path.join(BIN, 'island')
+    if on:
+        os.makedirs(BIN, exist_ok=True)
+        with open(target, 'w') as f:
+            f.write('#!/bin/sh\nexec python3 "$HOME/.island/island.py" "$@"\n')
+        os.chmod(target, 0o755)
+    elif os.path.exists(target):
+        os.remove(target)
+    for name in ('.bashrc', '.zshrc'):
+        path = os.path.join(HOME, name)
+        if not os.path.exists(path) and not (on and name == '.bashrc'):
+            continue
+        before = open(path).read() if os.path.exists(path) else ''
+        lines = [line for line in before.splitlines() if not line.endswith(PATH_MARK)]
+        if on:
+            lines.append(PATH_LINE)
+        after = '\n'.join(lines) + '\n' if lines else ''
+        if after != before:
+            if before and not os.path.exists(path + '.island-backup'):
+                shutil.copy2(path, path + '.island-backup')
+            with open(path, 'w') as f:
+                f.write(after)
+
+
 if __name__ == '__main__':
     args = sys.argv[1:] or ['status']
     if args[0] == 'install':
         install(args[1], '--if-present' in args)
     elif args[0] == 'uninstall':
         uninstall(args[1])
-    print(json.dumps({'claude': installed('claude'), 'codex': installed('codex')}))
+    elif args[0] == 'cli':
+        # --if-unused: only when no agent here uses Island any more
+        if args[1] == 'on' or '--if-unused' not in args or not (installed('claude') or installed('codex')):
+            cli(args[1] == 'on')
+    print(json.dumps({'claude': installed('claude'), 'codex': installed('codex'), 'cli': os.path.exists(os.path.join(BIN, 'island'))}))

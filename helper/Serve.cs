@@ -6,7 +6,8 @@ namespace Island;
 //   foreground  the window in front (and whether it is fullscreen, and where)
 //   clipboard   the clipboard changed (and whether what was copied is private)
 //   media       what plays (title, artist, cover, playing, position …)
-//   volume      your speakers' volume and mute
+//   volume      your speakers' volume and mute (checked often, so the island's volume bar follows your keys)
+//   brightness  your laptop screen's brightness, when it changes
 //   mic         your microphone's mute, and the apps using it right now
 //   level       how loud your speakers play (only while the visualizer asks for it)
 // and answers requests on stdin, for example:
@@ -18,6 +19,8 @@ namespace Island;
 //   {"id":6,"cmd":"keys","key":"v"}                  presses Ctrl+V once you let go of your hotkey
 //   {"id":7,"cmd":"ocr","path":"C:\\…\\clip.png"}    the text in an image
 //   {"id":8,"cmd":"meetings","hours":24}             your next meetings (classic Outlook, if it runs)
+//   {"id":9,"cmd":"copiedFiles"}                     the files you copied in Explorer (paths)
+//   {"id":10,"cmd":"copyFiles","paths":["C:\\…"]}   puts files on the clipboard, as Explorer's Copy does
 static class Serve
 {
     static readonly object writeLock = new();
@@ -30,7 +33,8 @@ static class Serve
         Loop("foreground", 500, WatchForeground);
         Loop("clipboard", 300, WatchClipboard);
         Loop("media", 1000, WatchMedia);
-        Loop("volume", 500, WatchVolume);
+        Loop("volume", 100, WatchVolume);
+        new Thread(WatchBrightness) { IsBackground = true, Name = "brightness" }.Start();
         Loop("mic", 1500, WatchMic);
         Loop("level", 60, () => { if (meterOn) Send(new JsonObject { ["type"] = "level", ["v"] = Math.Round(Audio.Peak(), 3) }); });
         string? line;
@@ -134,6 +138,20 @@ static class Serve
         SendIfChanged(new JsonObject { ["type"] = "volume", ["level"] = Math.Round(v.Value.level, 2), ["muted"] = v.Value.muted });
     }
 
+    static void WatchBrightness()
+    {
+        try
+        {
+            if (Brightness.Now() is not int now) return; // no screen here reports its brightness (a desktop PC)
+            Send(new JsonObject { ["type"] = "brightness", ["level"] = now, ["first"] = true });
+            Brightness.Watch(level => Send(new JsonObject { ["type"] = "brightness", ["level"] = level }));
+        }
+        catch (Exception e)
+        {
+            if (Environment.GetEnvironmentVariable("ISLAND_DEBUG") == "1") Console.Error.WriteLine($"brightness: {e}");
+        }
+    }
+
     static void WatchMic()
     {
         SendIfChanged(new JsonObject
@@ -177,6 +195,11 @@ static class Serve
                 return new JsonObject { ["ok"] = Keys.CtrlPlus(((string?)req["key"] ?? "v")[0]) };
             case "ocr":
                 return new JsonObject { ["ok"] = true, ["text"] = Keys.Ocr((string)req["path"]!) };
+            case "copiedFiles":
+                return new JsonObject { ["ok"] = true, ["paths"] = new JsonArray(Keys.CopiedFiles().Select(f => (JsonNode)f).ToArray()) };
+            case "copyFiles":
+                var paths = Strings(req["paths"]).Where(File.Exists).ToList();
+                return new JsonObject { ["ok"] = paths.Count > 0 && Keys.CopyFiles(paths) };
             case "meetings":
                 var list = Outlook.Next((int?)req["hours"] ?? 24);
                 return list == null ? new JsonObject { ["ok"] = false, ["error"] = "outlook not running" } : new JsonObject { ["ok"] = true, ["meetings"] = list };

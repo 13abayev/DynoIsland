@@ -55,6 +55,77 @@ static class Keys
         return false;
     }
 
+    const uint CF_HDROP = 15;
+    static readonly uint dropEffect = Native.RegisterClipboardFormat("Preferred DropEffect");
+
+    /// <summary>Opens the clipboard, waiting a moment when another app holds it.</summary>
+    static T WithClipboard<T>(Func<T> use)
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            if (Native.OpenClipboard(IntPtr.Zero))
+            {
+                try { return use(); } finally { Native.CloseClipboard(); }
+            }
+            Thread.Sleep(25);
+        }
+        throw new Exception("another app holds the clipboard");
+    }
+
+    /// <summary>The files you copied (in Explorer, …), or none.</summary>
+    public static List<string> CopiedFiles()
+    {
+        if (!Native.IsClipboardFormatAvailable(CF_HDROP)) return new();
+        return WithClipboard(() =>
+        {
+            var files = new List<string>();
+            var drop = Native.GetClipboardData(CF_HDROP);
+            if (drop == IntPtr.Zero) return files;
+            var n = Native.DragQueryFile(drop, 0xFFFFFFFF, null, 0);
+            for (uint i = 0; i < n; i++)
+            {
+                var name = new System.Text.StringBuilder((int)Native.DragQueryFile(drop, i, null, 0) + 1);
+                Native.DragQueryFile(drop, i, name, (uint)name.Capacity);
+                files.Add(name.ToString());
+            }
+            return files;
+        });
+    }
+
+    /// <summary>Puts files on the clipboard, as Explorer does when you copy them: paste them into a folder, a chat, an email.</summary>
+    public static bool CopyFiles(IReadOnlyList<string> paths)
+    {
+        // DROPFILES: where the names start (20), a point and a flag we do not use, and "the names are UTF-16";
+        // then the names, each ending with a 0, and one more 0 at the end
+        var names = System.Text.Encoding.Unicode.GetBytes(string.Join("\0", paths) + "\0\0");
+        var drop = Native.GlobalAlloc(0x0042, (UIntPtr)(20 + names.Length)); // movable, zeroed
+        var p = Native.GlobalLock(drop);
+        Marshal.WriteInt32(p, 0, 20);
+        Marshal.WriteInt32(p, 16, 1);
+        Marshal.Copy(names, 0, p + 20, names.Length);
+        Native.GlobalUnlock(drop);
+        var effect = Native.GlobalAlloc(0x0042, (UIntPtr)4);
+        Marshal.WriteInt32(Native.GlobalLock(effect), 1); // DROPEFFECT_COPY: pasting copies, it does not move
+        Native.GlobalUnlock(effect);
+        try
+        {
+            return WithClipboard(() =>
+            {
+                Native.EmptyClipboard();
+                // once the clipboard has them, they belong to Windows: not freed here
+                if (Native.SetClipboardData(CF_HDROP, drop) == IntPtr.Zero) return false;
+                drop = IntPtr.Zero;
+                if (Native.SetClipboardData(dropEffect, effect) != IntPtr.Zero) effect = IntPtr.Zero;
+                return true;
+            });
+        }
+        finally
+        {
+            if (drop != IntPtr.Zero) Native.GlobalFree(drop);
+            if (effect != IntPtr.Zero) Native.GlobalFree(effect);
+        }
+    }
+
     /// <summary>The text in an image (Windows' own text recognition, offline, in the languages of your Windows).</summary>
     public static string Ocr(string path)
     {

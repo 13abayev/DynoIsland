@@ -40,7 +40,7 @@ function renderBar(top, right) {
   let lead = '<span class="dot idle"></span>', text = open ? 'Island' : '', cls = 'quiet', chips = '';
   if (note) text = esc(note);
   else if (top) ({ lead, text, cls = '', chips = '' } = top);
-  if (ui.lead) lead = ui.lead(state.away ? 'sleep' : top?.mood || 'idle', lead);
+  if (ui.lead && !(top?.keepLead && !note)) lead = ui.lead(state.away ? 'sleep' : top?.mood || 'idle', lead);
   if (open) right += view === 'settings'
     ? `<button class="icon-btn" data-go="${lastTab}" title="Back">${ICON.back}</button>`
     : `<button class="icon-btn" data-go="settings" title="Settings">${ICON.gear}</button>`;
@@ -161,6 +161,7 @@ setInterval(() => {
   const now = Date.now();
   for (const el of island.querySelectorAll('[data-ends]')) el.textContent = clock(Number(el.dataset.ends) - now);
   for (const el of island.querySelectorAll('[data-since]')) el.textContent = clock(now - Number(el.dataset.since));
+  for (const el of island.querySelectorAll('[data-elapsed]')) el.textContent = duration(now - Number(el.dataset.elapsed));
 }, 1000);
 
 island.addEventListener('change', async e => {

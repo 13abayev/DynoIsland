@@ -62,6 +62,11 @@ static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetClipboardData(uint format);
     [DllImport("kernel32.dll")] public static extern IntPtr GlobalLock(IntPtr mem);
     [DllImport("kernel32.dll")] public static extern bool GlobalUnlock(IntPtr mem);
+    [DllImport("kernel32.dll")] public static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+    [DllImport("kernel32.dll")] public static extern IntPtr GlobalFree(IntPtr mem);
+    [DllImport("user32.dll")] public static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] public static extern IntPtr SetClipboardData(uint format, IntPtr mem);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint DragQueryFile(IntPtr drop, uint index, StringBuilder? file, uint size);
     [DllImport("ole32.dll", CharSet = CharSet.Unicode)] public static extern int CLSIDFromProgID(string progId, out Guid clsid);
     [DllImport("oleaut32.dll")] public static extern int GetActiveObject(ref Guid clsid, IntPtr reserved, [MarshalAs(UnmanagedType.IUnknown)] out object obj);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);

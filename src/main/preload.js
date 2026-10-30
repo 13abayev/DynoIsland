@@ -1,6 +1,6 @@
 'use strict';
 // The bridge between the island page and Island's main process.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = channel => cb => ipcRenderer.on(channel, (_e, data) => cb(data));
 
@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('islandApi', {
   clipOcr: id => ipcRenderer.invoke('clips:ocr', id),
   // media and sound
   onLevel: on('level'),
+  onHud: on('hud'),
   mediaControl: action => ipcRenderer.invoke('media', action),
   setVolume: level => ipcRenderer.invoke('volume', level),
   speakerMute: yes => ipcRenderer.invoke('speaker-mute', yes),
@@ -52,6 +53,25 @@ contextBridge.exposeInMainWorld('islandApi', {
   saveNotes: data => ipcRenderer.invoke('notes:save', data),
   timerStart: (min, label) => ipcRenderer.invoke('timer:start', min, label),
   timerCancel: id => ipcRenderer.invoke('timer:cancel', id),
+  // the shelf (files dropped on the island) and your phone
+  onShelf: on('shelf'),
+  shelf: () => ipcRenderer.invoke('shelf:list'),
+  pathOf: file => webUtils.getPathForFile(file), // a file dropped on the island: where it is on disk
+  shelfAdd: paths => ipcRenderer.invoke('shelf:add', paths),
+  shelfPick: () => ipcRenderer.invoke('shelf:pick'),
+  shelfRemove: id => ipcRenderer.invoke('shelf:remove', id),
+  shelfClear: () => ipcRenderer.invoke('shelf:clear'),
+  shelfOpen: id => ipcRenderer.invoke('shelf:open', id),
+  shelfShow: id => ipcRenderer.invoke('shelf:show', id),
+  shelfCopy: id => ipcRenderer.invoke('shelf:copy', id),
+  shelfToServer: (id, alias, dir) => ipcRenderer.invoke('shelf:server', id, alias, dir),
+  shelfToPhone: id => ipcRenderer.invoke('shelf:phone', id),
+  shelfDrag: id => ipcRenderer.send('shelf:drag', id),
+  phoneConnect: token => ipcRenderer.invoke('phone:connect', token),
+  phoneDisconnect: () => ipcRenderer.invoke('phone:disconnect'),
+  phonePairLink: () => ipcRenderer.invoke('phone:pair-link'),
+  jobRemove: id => ipcRenderer.invoke('jobs:remove', id),
+  jobsSeen: () => ipcRenderer.invoke('jobs:seen'),
   focusStart: min => ipcRenderer.invoke('focus:start', min),
   focusStop: () => ipcRenderer.invoke('focus:stop'),
   onTranslation: on('translation'),

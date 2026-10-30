@@ -137,12 +137,13 @@ function row(s) {
 
 function sessionsPage() {
   const g = groups();
+  const extra = ui.sections.map(f => f()).join('');
   if (!state.sessions.length) {
-    return limitsPanel() + `<div class="empty"><b>No AI sessions yet.</b><br>Connect Claude Code, Codex or your browser in ` +
+    return limitsPanel() + extra + `<div class="empty"><b>No AI sessions yet.</b><br>Connect Claude Code, Codex or your browser in ` +
       `<span class="link" data-go="settings">settings</span>. Sessions appear here as soon as they start.</div>`;
   }
   const section = (title, list, cls) => list.length ? `<div class="section ${cls}">${title} <span class="n">${list.length}</span></div>` + list.map(row).join('') : '';
-  let h = limitsPanel() + section('Needs you', g.needs, 'ask') + section('Done, not seen yet', g.done, 'done') + section('Working', g.working, 'work');
+  let h = limitsPanel() + section('Needs you', g.needs, 'ask') + extra + section('Done, not seen yet', g.done, 'done') + section('Working', g.working, 'work');
   if (g.quiet.length) {
     h += `<div class="section toggle" data-quiet>Quiet <span class="n">${g.quiet.length}</span> ${quietOpen ? '▾' : '▸'}</div>`;
     if (quietOpen) h += g.quiet.map(row).join('');

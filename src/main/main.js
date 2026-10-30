@@ -2,8 +2,9 @@
 // Island: a Dynamic Island for Windows. This file starts everything: the island windows at the top of your
 // displays (islands.js), the session hub (sessions.js), the local server hooks and the browser extension talk
 // to (server.js), the Windows helper (helper.js), clipboard history (clips.js), timers (timers.js), batteries and
-// meetings (system.js), the hotkeys, notifications and reminders.
-const { app, Menu, Notification, globalShortcut, ipcMain, powerMonitor, screen, shell } = require('electron');
+// meetings (system.js), your jobs (jobs.js), the shelf (shelf.js), your phone (phone.js), the hotkeys,
+// notifications and reminders.
+const { app, Menu, Notification, dialog, globalShortcut, ipcMain, nativeImage, powerMonitor, screen, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
@@ -16,6 +17,9 @@ const { Islands } = require('./islands');
 const { Clips } = require('./clips');
 const { Timers } = require('./timers');
 const { System } = require('./system');
+const { Jobs } = require('./jobs');
+const { Shelf } = require('./shelf');
+const { Phone } = require('./phone');
 const { jump } = require('./jump');
 const connect = require('./connect');
 const quick = require('./quick');
@@ -31,6 +35,7 @@ const HOTKEYS = {
   mic: 'Control+Alt+M', // mute / unmute your microphone
   notes: 'Control+Alt+N', // notes and to-dos
   translate: 'Control+Alt+T', // translate what you selected
+  phone: 'Control+Alt+P', // send what you copied to your phone
 };
 const HOTKEYS_SHOWN = { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' };
 
@@ -50,10 +55,11 @@ process.on('uncaughtException', logError);
 process.on('unhandledRejection', logError);
 
 let islands = null, hub = null, server = null, helper = null, tunnels = null, limits = null;
-let clips = null, timers = null, system = null;
+let clips = null, timers = null, system = null, jobs = null, shelf = null, phone = null;
 let fullscreenOn = null; // the display (id) where a fullscreen app is in front: only that island hides
 let lastApp = 0; // the last window in front that is not Island: where a clipboard item is pasted
 let clipEvents = 0; // clipboard changes the helper reported (for testing: /debug/islands)
+let clipPrivate = false; // what is on the clipboard now was copied by a password manager: never sent to your phone
 const live = { media: null, volume: null, mic: null }; // what the helper reports about media and sound
 const toasts = new Set(); // keep notifications alive until they are closed, or their click is lost
 
@@ -63,7 +69,8 @@ else app.whenReady().then(start);
 function start() {
   const token = config.token();
   hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
-  server = startServer({ hub, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify() } });
+  jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
+  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug } });
   helper = new Helper(path.join(ROOT, 'bin', 'helper', 'IslandHelper.dll'));
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
@@ -77,6 +84,11 @@ function start() {
   powerMonitor.on('resume', () => { limits.soon(); system.refresh(); });
   clips.on('change', () => islands?.send('clips', clips.view()));
   watchTimers();
+  watchJobs();
+  shelf = new Shelf(path.join(config.dataDir(), 'shelf.json'));
+  shelf.on('change', () => islands?.send('shelf', shelf.view()));
+  phone = new Phone(path.join(config.dataDir(), 'phone.json'), path.join(app.getPath('downloads'), 'From phone'));
+  watchPhone();
   system.on('change', sendState);
   system.on('meeting', m => {
     toastSimple(`${m.subject || 'Meeting'} starts in 5 minutes`, m.join ? 'Click to join' : m.location || '', () => m.join && openLink(m.join));
@@ -101,9 +113,16 @@ function watchHelper() {
     }
     if (on !== fullscreenOn) { fullscreenOn = on; sendState(); }
   });
-  helper.on('clipboard', m => { clipEvents++; clips.changed(m).catch(e => console.log('Island clipboard:', e.message)); });
+  helper.on('clipboard', m => { clipEvents++; clipPrivate = !!m.private; clips.changed(m).catch(e => console.log('Island clipboard:', e.message)); });
   helper.on('media', m => { live.media = m; updateMeter(); sendState(); });
-  helper.on('volume', v => { live.volume = { level: v.level, muted: v.muted }; sendState(); });
+  helper.on('volume', v => {
+    const before = live.volume;
+    live.volume = { level: v.level, muted: v.muted };
+    // the volume bar in the closed island (not for the first report: that is no change)
+    if (before && (before.level !== v.level || before.muted !== v.muted)) islands?.send('hud', { kind: 'volume', ...live.volume });
+    sendState();
+  });
+  helper.on('brightness', b => { if (!b.first) islands?.send('hud', { kind: 'brightness', level: b.level / 100 }); });
   helper.on('mic', m => { live.mic = { muted: m.muted, apps: m.apps || [] }; sendState(); });
   helper.on('level', m => islands?.send('level', m.v));
   helper.on('ready', () => updateMeter(true)); // a restarted helper starts with the meter off
@@ -128,7 +147,8 @@ async function islandsInfo() {
       `({ island: document.getElementById('island').className, bar: document.getElementById('bar').innerText, width: getComputedStyle(document.getElementById('island')).width,
          sessions: state.sessions.length, media: state.media && { title: state.media.title, playing: state.media.playing, app: state.media.app, cover: !!state.media.cover },
          volume: state.volume, mic: state.mic, batteries: state.batteries, meetings: (state.meetings || []).length, meetingsStatus: state.meetingsStatus,
-         timers: (state.timers || []).length, focus: state.focus, pages: Object.keys(ui.pages) })`,
+         timers: (state.timers || []).length, focus: state.focus, pages: Object.keys(ui.pages),
+         jobs: (state.jobs || []).map(j => [j.name, j.state, j.percent, j.last].join(' | ')), phone: state.phone, hud })`,
     ).catch(e => ({ error: e.message })),
   })));
   return { fullscreenOn, clipEvents, clips: clips.items.length, windows, displays: islands?.list() };
@@ -144,6 +164,8 @@ function sendState() {
       ...live,
       ...system.view(),
       ...timers.view(),
+      ...jobs.view(),
+      phone: phone.status(),
       ext: server.extConnected(),
       settings: config.settings(),
       limitsStatus: limits?.status || 'off',
@@ -235,6 +257,7 @@ function registerHotkeys() {
   });
   register(HOTKEYS.paste, pastePlain);
   register(HOTKEYS.translate, translateSelection);
+  register(HOTKEYS.phone, sendToPhone);
   register(HOTKEYS.mic, async () => {
     if (live.mic?.muted == null) { noteAll('No microphone found'); return; }
     const r = await helper.request({ cmd: 'micMute', mute: !live.mic.muted });
@@ -309,6 +332,89 @@ function watchTimers() {
     if (what === 'break-end') noteAll('Break is over', 'timer', 4000);
   });
   if (timers.focusing() && config.settings().focusHolds !== false) hub.hold(true); // Island restarted during your focus time
+}
+
+// ---------- your jobs (island run -- …) ----------
+const took = sec => (sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m`);
+const jobWhere = j => (j.src === 'ssh' ? ` on ${j.host}` : j.src === 'wsl' ? ' in WSL' : '');
+
+function watchJobs() {
+  jobs.on('change', sendState);
+  jobs.on('end', j => {
+    const ok = j.state === 'done';
+    const title = `${j.name} ${ok ? 'finished' : `failed (exit ${j.exit})`}${jobWhere(j)}`;
+    const body = [took(Math.round((j.ended - j.started) / 1000)), (j.tail || []).slice(-1)[0] || j.last].filter(Boolean).join(' · ');
+    const quiet = timers.focusing() && config.settings().focusHolds !== false; // while you focus: no sound, no notification
+    noteAll(`${j.name} ${ok ? 'finished' : 'failed'}`, quiet || fullscreenOn ? null : ok ? 'done' : 'ask', 6000);
+    if (!quiet) toastSimple(title, body, () => openIsland(false, 'sessions'));
+  });
+  jobs.on('message', m => {
+    noteAll(m.text, config.settings().sound !== 'off' ? 'done' : null, 6000);
+    toastSimple(`Message from ${m.src === 'ssh' ? m.alias || m.host : m.src === 'wsl' ? 'WSL' : 'a script'}`, m.text);
+  });
+}
+
+// ---------- your phone (Telegram) ----------
+function watchPhone() {
+  phone.on('change', sendState);
+  phone.on('paired', () => noteAll('Your phone is connected', 'done', 4000));
+  phone.on('problem', e => console.log('Island phone:', e));
+  phone.on('text', async text => {
+    await clip.writeText(text); // and in the clipboard history, like anything you copy
+    noteAll(`From your phone: ${text.replace(/\s+/g, ' ').slice(0, 48)}`, null, 3500);
+  });
+  phone.on('file', async f => {
+    await shelf.add([f.path], 'phone');
+    const name = path.basename(f.path);
+    if (f.photo) {
+      const img = nativeImage.createFromPath(f.path);
+      if (!img.isEmpty()) await clip.writeImagePng(img.toPNG()); // a photo is ready to paste right away
+    }
+    noteAll(f.photo ? 'Photo from your phone: copied, and on the shelf' : `${name} from your phone is on the shelf`, null, 4000);
+  });
+}
+
+/** Ctrl+Alt+P: what you copied (files in Explorer, text or a picture) to your phone. */
+async function sendToPhone() {
+  if (!phone.status().paired) { noteAll('Set up your phone first: settings → Phone', null, 3000); return; }
+  try {
+    const files = ((await helper.request({ cmd: 'copiedFiles' })).paths || []).filter(f => { try { return fs.statSync(f).isFile(); } catch { return false; } });
+    if (files.length) {
+      noteAll(`Sending ${files.length === 1 ? path.basename(files[0]) : files.length + ' files'} to your phone…`, null, 120000);
+      for (const f of files.slice(0, 10)) await phone.sendFile(f);
+      noteAll(files.length > 10 ? 'Sent the first 10 files to your phone' : 'Sent to your phone', null, 2500);
+      return;
+    }
+    if (clipPrivate) { noteAll('That copy is private (a password?), so it was not sent', null, 3500); return; }
+    const text = await clip.readText();
+    if (text.trim()) { await phone.sendText(text); noteAll('Sent to your phone', null, 2000); return; }
+    const png = await clip.readImagePng();
+    if (png) {
+      noteAll('Sending the picture to your phone…', null, 60000);
+      await phone.sendFile(png, 'picture.png', { photo: true }).catch(() => phone.sendFile(png, 'picture.png')); // too big for a photo: as a file
+      noteAll('Sent to your phone', null, 2000);
+      return;
+    }
+    noteAll('Copy something first, then press Ctrl+Alt+P', null, 2500);
+  } catch (e) { noteAll(`Not sent: ${e.message}`, null, 5000); }
+}
+
+// ---------- the shelf ----------
+/** For testing (/debug/shelf): { add: [paths] } as if dropped on the island, { copy: id } as its Copy button. */
+async function shelfDebug(d) {
+  if (Array.isArray(d.add)) await shelf.add(d.add);
+  if (d.copy) return helper.request({ cmd: 'copyFiles', paths: [shelf.find(String(d.copy))?.path].filter(Boolean) });
+  if (d.remove) shelf.remove(String(d.remove));
+  return shelf.view().shelf.map(x => ({ ...x, icon: x.icon ? `${x.icon.slice(0, 22)}… (${x.icon.length} chars)` : '' }));
+}
+
+/** Drags a shelf file out of the island, into any app. */
+function dragOut(e, id) {
+  const x = shelf.find(String(id));
+  if (!x || !fs.existsSync(x.path)) return;
+  let icon = x.icon ? nativeImage.createFromDataURL(x.icon) : null;
+  if (!icon || icon.isEmpty()) icon = nativeImage.createFromBitmap(Buffer.alloc(32 * 32 * 4, 200), { width: 32, height: 32 });
+  e.sender.startDrag({ file: x.path, icon: icon.resize({ width: 48 }) });
 }
 
 // ---------- notes ----------
@@ -437,6 +543,36 @@ function wireIpc(token) {
   handle('notes:save', data => { try { fs.writeFileSync(notesFile(), JSON.stringify({ text: String(data?.text || ''), todos: Array.isArray(data?.todos) ? data.todos : [] })); } catch {} });
   handle('timer:start', (min, labelText) => timers.start(Math.max(0.1, Number(min) || 0), labelText));
   handle('timer:cancel', id => timers.cancel(id));
+  handle('jobs:remove', id => jobs.remove(String(id)));
+  // the shelf
+  handle('shelf:list', () => shelf.view());
+  handle('shelf:add', async paths => shelf.add(Array.isArray(paths) ? paths : []));
+  ipcMain.handle('shelf:pick', async e => { // "Add files…": a picker, for when dragging is not handy
+    const r = await dialog.showOpenDialog(islands.fromSender(e.sender), { title: 'Put files on the shelf', properties: ['openFile', 'multiSelections'] });
+    if (!r.canceled) await shelf.add(r.filePaths);
+  });
+  handle('shelf:remove', id => shelf.remove(String(id)));
+  handle('shelf:clear', () => shelf.clear());
+  handle('shelf:open', id => { const x = shelf.find(String(id)); if (x) shell.openPath(x.path); });
+  handle('shelf:show', id => { const x = shelf.find(String(id)); if (x) shell.showItemInFolder(x.path); });
+  handle('shelf:copy', async id => { const x = shelf.find(String(id)); return x ? helper.request({ cmd: 'copyFiles', paths: [x.path] }) : { ok: false }; });
+  handle('shelf:server', async (id, alias, dir) => {
+    if (!config.settings().sshServers.includes(alias)) return { ok: false, error: 'Connect that server first (settings).' };
+    const folder = String(dir || '').trim() || '~';
+    config.updateSettings({ serverDirs: { ...config.settings().serverDirs, [alias]: folder } }); // remembered for next time
+    try { await shelf.sendToServer(String(id), alias, folder); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+  });
+  handle('shelf:phone', async id => {
+    const x = shelf.find(String(id));
+    if (!x || x.dir) return { ok: false, error: x ? 'Folders cannot be sent to your phone; zip it first.' : 'That file is gone.' };
+    try { await phone.sendFile(x.path); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.on('shelf:drag', (e, id) => dragOut(e, id));
+  // your phone
+  handle('phone:connect', async token => { try { await phone.connect(token); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+  handle('phone:disconnect', () => phone.disconnect());
+  handle('phone:pair-link', () => { const st = phone.status(); if (st.bot && st.code) shell.openExternal(`https://t.me/${st.bot}?start=${st.code}`); });
+  handle('jobs:seen', () => jobs.seen());
   handle('focus:start', min => timers.focusStart(Math.max(1, Number(min) || 25)));
   handle('focus:stop', () => timers.focusStop());
   handle('copy-token', async () => { await clip.writeText(token); return true; });
