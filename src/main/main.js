@@ -7,6 +7,7 @@
 const { app, Menu, Notification, dialog, globalShortcut, ipcMain, nativeImage, powerMonitor, screen, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const config = require('./config');
 const { Hub } = require('./sessions');
 const { startServer, PORT } = require('./server');
@@ -27,6 +28,9 @@ const clip = require('./clip-io');
 
 const ROOT = path.join(__dirname, '..', '..');
 const APP_ID = 'local.island';
+// Island's own id for its notifications (Island.lnk carries it; without a fixed one Electron makes up a new one
+// every start)
+const TOAST_CLSID = '{66AE2AB9-42F3-4988-9F7D-B92139392C42}';
 const HOTKEYS = {
   toggle: 'Control+Alt+Space', // open / close the island
   next: 'Control+Alt+J', // the session that waited longest
@@ -40,6 +44,7 @@ const HOTKEYS = {
 const HOTKEYS_SHOWN = { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' };
 
 app.setAppUserModelId(APP_ID);
+app.setToastActivatorCLSID(TOAST_CLSID);
 app.setPath('userData', path.join(app.getPath('appData'), 'Island'));
 
 // an unexpected error in one part must not stop Island or interrupt you with a dialog: it goes to island.log
@@ -105,6 +110,7 @@ function start() {
   registerHotkeys();
   watchAway();
   ensureStartMenuShortcut();
+  checkStartWithWindows();
   wireIpc(token);
 }
 
@@ -226,6 +232,7 @@ function toastSimple(title, body, onClick) {
   if (!config.settings().toasts) return;
   const n = new Notification({ title, body, silent: true });
   toasts.add(n);
+  n.once('show', () => setTimeout(hideElectronShortcut, 1500)); // Electron may have just (re)made its shortcut
   n.on('click', () => { toasts.delete(n); onClick?.(); });
   n.on('close', () => toasts.delete(n));
   n.show();
@@ -456,15 +463,46 @@ async function connectStatus() {
   return status;
 }
 
+const reg = (...args) => new Promise(resolve => execFile('reg.exe', args, { windowsHide: true }, (err, out) => resolve(err ? '' : String(out))));
+
 function ensureStartMenuShortcut() {
   // a Start menu entry with Island's app id: Windows shows its notifications properly, and you can start it from there
-  const link = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Island.lnk');
-  if (fs.existsSync(link)) return;
-  shell.writeShortcutLink(link, { target: process.execPath, args: `"${ROOT}"`, appUserModelId: APP_ID, description: 'Island: your AI sessions in one place' });
+  const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  hideElectronShortcut();
+  reg('add', `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`, '/v', 'DisplayName', '/d', 'Island', '/f'); // the name on its notifications
+  const link = path.join(programs, 'Island.lnk');
+  const want = { target: process.execPath, args: `"${ROOT}"`, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID, description: 'Island: your AI sessions in one place' };
+  let have = null;
+  try { have = shell.readShortcutLink(link); } catch {}
+  // (re)written when it is missing, or older (no notification id), or Island's folder moved
+  if (!have || have.target !== want.target || have.args !== want.args || (have.toastActivatorClsid || '').toUpperCase() !== TOAST_CLSID) shell.writeShortcutLink(link, want);
 }
+
+/**
+ * Electron adds a Start menu shortcut of its own for notifications, named after itself ("Electron", with Island's
+ * id but without Island's folder): Windows would list Island as "Electron", and that one starts an empty Electron.
+ * It comes back with the first notification of every run, so it is hidden instead (Start leaves hidden ones out).
+ */
+function hideElectronShortcut() {
+  const stray = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Electron.lnk');
+  try { if (shell.readShortcutLink(stray).appUserModelId === APP_ID) execFile('attrib.exe', ['+h', stray], { windowsHide: true }, () => {}); } catch {}
+}
+
+// Windows only starts the startup entries its list of startup apps marks as allowed (Task Manager → Startup apps);
+// a new entry without a mark is skipped on recent Windows 11
+const STARTUP_APPROVED = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
 
 function setStartWithWindows(on) {
   app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: [ROOT] });
+  if (on) reg('add', STARTUP_APPROVED, '/v', APP_ID, '/t', 'REG_BINARY', '/d', '02' + '0'.repeat(22), '/f'); // allowed, as Task Manager's Enable does
+}
+
+/** At start: "Start with Windows" on → its entry is there and allowed, unless you turned it off in Task Manager. */
+async function checkStartWithWindows() {
+  if (!config.settings().startWithWindows) return;
+  const mark = /REG_BINARY\s+([0-9A-F]{2})/i.exec(await reg('query', STARTUP_APPROVED, '/v', APP_ID))?.[1];
+  if (mark && mark !== '02' && mark !== '06') { config.updateSettings({ startWithWindows: false }); sendState(); return; } // you disabled it there
+  setStartWithWindows(true); // also follows the Island folder if you moved it
 }
 
 function wireIpc(token) {
