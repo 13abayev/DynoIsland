@@ -94,6 +94,12 @@ function start() {
     toastSimple(`${m.subject || 'Meeting'} starts in 5 minutes`, m.join ? 'Click to join' : m.location || '', () => m.join && openLink(m.join));
     noteAll(`${m.subject || 'Meeting'} in 5 min`, 'timer');
   });
+  system.on('low', b => {
+    // a red battery in every island; only the one in front of you plays the sound
+    const here = islands?.underCursor(), quiet = config.settings().sound === 'off' || !!fullscreenOn;
+    for (const w of islands?.all() || []) w.webContents.send('battery-low', { name: b.name, level: b.level, sound: w === here && !quiet });
+    toastSimple(`${b.name}: battery low`, `${b.level}% left. Time to charge it.`);
+  });
   startTunnels();
   islands = new Islands({ root: ROOT, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
   registerHotkeys();
@@ -494,6 +500,7 @@ function wireIpc(token) {
     if ('meetings' in changes) system.readMeetings();
     if ('visualizer' in changes || 'showMedia' in changes) updateMeter();
     if ('focusHolds' in changes && timers.focusing()) hub.hold(next.focusHolds);
+    if ('lowBattery' in changes) system.update();
     sendState();
     return next;
   });

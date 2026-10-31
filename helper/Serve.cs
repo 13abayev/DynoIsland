@@ -10,6 +10,7 @@ namespace Island;
 //   brightness  your laptop screen's brightness, when it changes
 //   mic         your microphone's mute, and the apps using it right now
 //   level       how loud your speakers play (only while the visualizer asks for it)
+//   pods        your AirPods' battery (earbuds and case), while they are connected (after a "pods" request)
 // and answers requests on stdin, for example:
 //   {"id":1,"cmd":"focus","hwnd":123}
 //   {"id":2,"cmd":"focusMatch","process":["Code"],"title":["my-app","[WSL: Ubuntu]"]}
@@ -21,6 +22,7 @@ namespace Island;
 //   {"id":8,"cmd":"meetings","hours":24}             your next meetings (classic Outlook, if it runs)
 //   {"id":9,"cmd":"copiedFiles"}                     the files you copied in Explorer (paths)
 //   {"id":10,"cmd":"copyFiles","paths":["C:\\…"]}   puts files on the clipboard, as Explorer's Copy does
+//   {"id":11,"cmd":"pods","devices":[{"address":"A1B2C3D4E5F6","model":8206}]}   follow these AirPods' battery
 static class Serve
 {
     static readonly object writeLock = new();
@@ -195,6 +197,11 @@ static class Serve
                 return new JsonObject { ["ok"] = Keys.CtrlPlus(((string?)req["key"] ?? "v")[0]) };
             case "ocr":
                 return new JsonObject { ["ok"] = true, ["text"] = Keys.Ocr((string)req["path"]!) };
+            case "pods":
+                var devices = (req["devices"] as JsonArray ?? new JsonArray())
+                    .Select(d => (address: Convert.ToUInt64((string)d!["address"]!, 16), model: (int)d!["model"]!)).ToList();
+                Pods.Track(devices, Send);
+                return new JsonObject { ["ok"] = true };
             case "copiedFiles":
                 return new JsonObject { ["ok"] = true, ["paths"] = new JsonArray(Keys.CopiedFiles().Select(f => (JsonNode)f).ToArray()) };
             case "copyFiles":

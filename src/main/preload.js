@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('islandApi', {
   // media and sound
   onLevel: on('level'),
   onHud: on('hud'),
+  onBatteryLow: on('battery-low'),
   mediaControl: action => ipcRenderer.invoke('media', action),
   setVolume: level => ipcRenderer.invoke('volume', level),
   speakerMute: yes => ipcRenderer.invoke('speaker-mute', yes),

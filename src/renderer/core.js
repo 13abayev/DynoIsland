@@ -83,6 +83,11 @@ const ICON = {
   shelf: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5h3l1 1.8h4l1-1.8h3"/><path d="M2 9.5 3.6 4a1 1 0 0 1 1-.8h6.8a1 1 0 0 1 1 .8L14 9.5V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>',
   folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.3c0-.7.5-1.2 1.2-1.2h3l1.4 1.6h5.2c.7 0 1.2.5 1.2 1.2v6c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2z"/></svg>',
 };
+/** A battery filled to its level. */
+const batteryIcon = level =>
+  '<svg class="bat-icon" viewBox="0 0 20 12"><rect x=".75" y=".75" width="16" height="10.5" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+  `<rect x="17.6" y="4" width="1.6" height="4" rx=".8" fill="currentColor"/><rect x="2.3" y="2.3" width="${(12.9 * Math.max(8, Math.min(100, level ?? 0))) / 100}" height="7.4" rx="1.3" fill="currentColor"/></svg>`;
+const BOLT = '<svg class="bolt" viewBox="0 0 10 14"><path fill="currentColor" d="M6 0 0 8h3.6L3 14l6-8H5.4z"/></svg>';
 const agentIcon = a => (a === 'codex' ? ICON.codex : a === 'chatgpt' ? ICON.chatgpt : ICON.claude);
 
 /** Tells you something in the closed island for a moment ("Copied", "Display 2", …). Set by island.js. */
@@ -105,13 +110,13 @@ function demoApi() {
     settings: {
       remindAfterMin: 5, repeatEveryMin: 15, maxReminders: 3, sound: 'stuck', toasts: true, hideInFullscreen: true, startWithWindows: false,
       limitsFromLogin: true, answerFromIsland: true, clipboardHistory: true, showMedia: true, visualizer: true, meetings: true,
-      focusHolds: true, mascot: true, hud: true, translateTo: 'English', translateAlt: 'Azerbaijani',
+      focusHolds: true, mascot: true, hud: true, lowBattery: 20, translateTo: 'English', translateAlt: 'Azerbaijani',
     },
     hotkeys: { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' },
     media: { has: true, title: 'Lost in the Fire', artist: 'Gesaffelstein', app: 'Spotify', playing: true, position: 42, duration: 202, positionAt: now, canNext: true, canPrev: true, cover: '' },
     volume: { level: 0.54, muted: false },
     mic: { muted: false, apps: ['Teams'] },
-    batteries: [{ name: 'Headphones', short: 'Headphones', level: 80 }],
+    batteries: [{ name: 'AirPods Pro', short: 'AirPods Pro', level: 70, pods: { left: 80, right: 70, case: 40, chargingCase: true } }, { name: 'Wireless Mouse', short: 'Wireless Mouse', level: 15, low: true }],
     meetings: [{ subject: 'Standup', start: new Date(now + 8 * m).toISOString(), end: new Date(now + 23 * m).toISOString(), join: 'https://teams.microsoft.com/l/meetup-join/demo' }],
     timers: [{ id: 't1', label: 'Tea', minutes: 5, ends: now + 4 * m }],
     focus: null,

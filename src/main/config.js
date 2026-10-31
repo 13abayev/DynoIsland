@@ -23,6 +23,7 @@ const DEFAULTS = {
   focusHolds: true, // reminders and sounds wait while you focus
   mascot: true, // Robo, the face at the left of the island
   hud: true, // the volume and brightness bar in the closed island when you change them
+  lowBattery: 20, // a red alert when a Bluetooth device (AirPods too) gets this low, in %; 0 = off
   serverDirs: {}, // the folder on each server that files you drop on it go to (alias → folder)
   translateTo: 'English', // Ctrl+Alt+T translates into this language…
   translateAlt: 'Azerbaijani', // …or into this one when the text is already in the first

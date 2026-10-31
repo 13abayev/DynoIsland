@@ -72,7 +72,7 @@ ui.cards.push(() => {
       h += `<button class="sys-btn${mic.muted ? ' off' : inUse ? ' live' : ''}" data-cmd="mic-toggle" ` +
         `title="${mic.muted ? 'Microphone muted: click to unmute' : 'Click to mute your microphone'}${inUse ? ` · in use by ${esc(mic.apps.join(', '))}` : ''} (Ctrl+Alt+M)">${mic.muted ? ICON.micOff : ICON.mic}</button>`;
     }
-    for (const b of batteries) h += `<span class="battery${b.level <= 20 ? ' low' : ''}" title="${esc(b.name)}">${esc(b.short)} ${b.level}%</span>`;
+    for (const b of batteries) h += batteryChip(b); // battery-ui.js
     h += '</div>';
   }
   return h;

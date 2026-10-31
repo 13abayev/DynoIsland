@@ -169,9 +169,20 @@ and you tap Send. Put it on your Home Screen, or on Back Tap (Settings → Acces
 
 What plays (Spotify, YouTube in the browser, any player Windows' media controls know) shows above the tabs with
 its controls, and in the closed island with its cover, a small visualizer and the cover's color around the
-island. Below it: your volume, your microphone, and the battery of your Bluetooth devices (the ones Windows
-shows a battery for). A red dot at the right of the island means an app is using your microphone; click it or
-press Ctrl+Alt+M to mute.
+island. Below it: your volume, your microphone, and the battery of your Bluetooth devices. A red dot at the right
+of the island means an app is using your microphone; click it or press Ctrl+Alt+M to mute.
+
+**Batteries.** Most Bluetooth devices tell Windows their battery, and Island shows what Windows shows (checked
+every 5 minutes). **AirPods** (and Beats) do not, so Island listens for the battery they announce over Bluetooth,
+the way an iPhone does: each earbud and the case, and which is charging (`AirPods L 80% · R 70% · Case 40%`). It
+only listens while your own AirPods are connected to this PC, only for their model, and takes the strongest
+signal, so a colleague's AirPods nearby are not mistaken for yours. An earbud in its case, or the case with its
+lid closed, does not announce its battery, so it is left out until you take it out or open the lid.
+
+**Low battery alert.** When a device gets to 20% (settings → Batteries; 0 turns it off), the closed island turns red
+for a moment with the device and its level, plays a sound and you get a notification. After that a small red
+battery stays at the right of the island until you charge it. You are told once; again only after it was charged.
+For AirPods, the lowest earbud you are using counts (one charging in its case does not).
 
 When you change the volume or your laptop screen's brightness (keys, Windows' sliders), the closed island shows a
 bar for a moment (settings → Volume and brightness). Windows still shows its own popup too. Monitors on a cable do
@@ -260,16 +271,17 @@ src/main/tunnels.js   Island's own SSH tunnel to each connected server
 src/main/quick.js     claude -p in a project (quick prompt, translate)
 src/main/clips.js     clipboard history; clip-io.js: Electron 45's asynchronous clipboard
 src/main/timers.js    timers and the focus timer
-src/main/system.js    Bluetooth batteries and meetings
+src/main/system.js    Bluetooth batteries (AirPods too), the low battery alert, meetings
 src/main/limits.js    your Claude limits from Anthropic's usage service
 src/main/jobs.js      your jobs (island run / island progress)
 src/main/shelf.js     the shelf: files you dropped, scp to your servers
 src/main/phone.js     your phone, through your own Telegram bot
 src/main/jump.js      bringing back a session's window or tab
 src/renderer/         the island: core.js + island.js, and one *-ui.js per part (sessions, jobs, prompt,
-                      clipboard, shelf, phone, notes, focus, media, volume bar, meeting, translate, mascot, settings)
+                      clipboard, shelf, phone, notes, focus, media, volume bar, batteries, meeting, translate, mascot,
+                      settings)
 helper/               C# helper: windows, keys, clipboard changes and copied files, media controls, sound,
-                      brightness, mic, OCR, Outlook, and the Windows hook / reply / status line
+                      brightness, AirPods battery, mic, OCR, Outlook, and the Windows hook / reply / status line
 hooks/linux/          hook, reply, status line, the island command (island.py) and settings merge for WSL and
                       SSH servers
 extension/            the Chrome / Edge extension for ChatGPT and Claude
