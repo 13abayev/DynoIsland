@@ -16,8 +16,12 @@ playing, your clipboard, notes, timers, your next meeting, and Robo.
 
 **Steps**
 
-1. Put this folder on the Windows side, for example `C:\Users\<you>\Projects\island`. The app runs on
-   Windows; WSL only builds it.
+1. Get it onto the Windows side, for example into `C:\Users\<you>\Projects\island` (the app runs on Windows;
+   WSL only builds it). In PowerShell:
+
+   ```powershell
+   git clone https://github.com/13abayev/DynoIsland.git "$env:USERPROFILE\Projects\island"
+   ```
 2. In WSL, build it:
 
    ```bash
@@ -309,3 +313,7 @@ jobs, the shelf and your phone's bot.
   you type, tell Island (it logs a hotkey another app already uses).
 - **Shared SSH servers**: other users on that server can reach the tunnel port there. Island's token keeps
   them out. If someone else already uses port 47900 on a server, the settings page says the port is busy.
+
+## License
+
+Apache License 2.0: see [LICENSE](LICENSE).
