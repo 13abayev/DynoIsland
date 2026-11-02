@@ -7,46 +7,38 @@ playing, your clipboard, notes, timers, your next meeting, and Robo.
 
 ## Install
 
-**You need**
+Island runs on Windows 11 and brings everything it needs with it (also the .NET runtime for its helper). WSL is
+optional: you only need it for Claude Code or Codex inside WSL.
 
-- Windows 11
-- WSL with Ubuntu, and Node.js 20 or newer inside WSL
-- The .NET runtime 9 or newer on Windows. Check with `dotnet --list-runtimes` in PowerShell; if it is
-  missing: `winget install Microsoft.DotNet.Runtime.10`
+1. Download `Island-<version>-win-x64.zip` from the [latest release](https://github.com/13abayev/DynoIsland/releases/latest).
+2. Unzip it anywhere and start `Island\Island.exe`. (If Windows says it protected your PC, choose *More info* →
+   *Run anyway*.)
+3. The island opens with **Setup**. Press **Install Island**: it goes into `%LOCALAPPDATA%\Programs\Island` (no
+   admin rights needed), gets a Start menu entry, and Settings → Apps can remove it again. Then setup walks you
+   through:
+   - **your AI tools**: Island finds Claude Code (on Windows and in WSL), Codex and the servers in your SSH config,
+     and connects what you pick;
+   - **ChatGPT and Claude in the browser**: you load the extension, and it connects by itself;
+   - **where Claude Code runs** for translate and the quick prompt;
+   - **your phone** (optional);
+   - **Windows**: start with Windows, notifications, and which displays show the island.
 
-**Steps**
+   Anything you skip keeps a dot on its settings tab until it is done; settings → General → **Run setup again**
+   starts over.
+4. Delete the zip and the unzipped folder: Island runs from where it installed itself.
 
-1. Get it onto the Windows side, for example into `C:\Users\<you>\Projects\island` (the app runs on Windows;
-   WSL only builds it). In PowerShell:
+**Updating**: Island looks for a new release once a day (settings → General → About). Quit Island (right-click
+the notch → Quit), then unzip the new one and start it: **Install** replaces the old Island and keeps your settings.
 
-   ```powershell
-   git clone https://github.com/13abayev/DynoIsland.git "$env:USERPROFILE\Projects\island"
-   ```
-2. In WSL, build it:
-
-   ```bash
-   cd /mnt/c/Users/<you>/Projects/island && bash tools/setup.sh
-   ```
-
-   This installs the packages (with the Windows build of Electron), installs the .NET SDK into `~/.dotnet`
-   if it is not there yet (no sudo needed), and builds the Windows helper.
-3. Start Island from the same folder in PowerShell:
-
-   ```powershell
-   .\node_modules\electron\dist\electron.exe .
-   ```
-
-   The first start adds **Island** to the Start menu. From then on start it from there, or turn on
-   *Start with Windows* in its settings.
-4. Connect your sessions: click the notch at the top of the screen, click the gear, and press **Connect**
-   next to what you use (see [Connecting your sessions](#connecting-your-sessions)).
-5. Optional, for ChatGPT and Claude in the browser: load the extension (see below).
+To run Island from its source instead, see [Developing](#developing).
 
 ## Use
 
 **Hover** the notch to peek, **click** it to keep it open. Right-click it to quit or restart. The open island
 has tabs: **Sessions** (with your jobs), **Ask**, **Clipboard**, **Shelf**, **Notes** and **Focus**, and the gear for
-settings. What is playing and your next meeting show above the tabs.
+settings. What is playing and your next meeting show above the tabs. Settings has its own tabs: **General**
+(start with Windows, displays, Robo, hotkeys, updates, uninstall), **Sessions** (your connections), **Alerts**,
+**Phone**, **Tools** (clipboard, translate) and **Devices** (media, volume and brightness, batteries).
 
 ### Hotkeys
 
@@ -207,22 +199,24 @@ before. The New Outlook cannot be read this way.
 
 ### Translate
 
-Select text anywhere and press Ctrl+Alt+T: Claude Code (Haiku, in WSL) translates it into your language (settings:
-English by default; text already in English goes into Azerbaijani). Your clipboard is put back afterwards, and the
-translation is not kept in your Claude history.
+Select text anywhere and press Ctrl+Alt+T: Claude Code (Haiku) translates it into your language (settings →
+Tools: English by default, and a second language you choose for text that is already in English). It runs Claude
+Code on Windows, or in WSL or on a server (settings → Tools → *Claude Code runs*). Your clipboard is put back
+afterwards, and the translation is not kept in your Claude history.
 
 ### Robo and displays
 
 **Robo**, the face at the left of the island, blinks, looks around while agents work, hops when one needs you,
-smiles when one is done, bobs to music and dozes while you are away (settings → Look). Settings → **Displays**
+smiles when one is done, bobs to music and dozes while you are away (settings → General → Look). Settings → General → **Displays**
 lets you tick the displays that show an island; **Identify displays** shows their numbers. A fullscreen app hides
 only the island on its own display.
 
 ## Connecting your sessions
 
-Open the island, click the gear, and press **Connect** next to what you use. Island only changes a settings
-file when you press Connect (or **Update**, which installs Island's newest hooks again), keeps your own hooks and
-settings, and saves a copy as `<file>.island-backup` the first time. **Disconnect** removes exactly what it added.
+Setup connects what you pick; later, settings → **Sessions** has **Connect** for each. Island only changes a
+settings file when you press Connect (or **Update**, which installs Island's newest hooks again), keeps your own
+hooks and settings, and saves a copy as `<file>.island-backup` the first time. **Disconnect** removes exactly what
+it added, and so does uninstalling Island.
 
 | Where it runs | How Island sees it |
 |---|---|
@@ -240,33 +234,51 @@ settings, and saves a copy as `<file>.island-backup` the first time. **Disconnec
   SSH connection to that server open (`ssh -N -R 127.0.0.1:47900:127.0.0.1:47900 <server>`), so the server's
   port 47900 leads back to Island; it reconnects by itself and logs in with your SSH keys, like VS Code does.
 - **Browser**: open `chrome://extensions` or `edge://extensions`, turn on *Developer mode*, choose
-  *Load unpacked* and pick the `extension` folder. Then click the Island extension and paste the token
-  (gear → *Copy token*). After updating Island, press the extension's reload arrow there and reload your
-  chat tabs.
+  *Load unpacked* and pick Island's extension folder (setup and settings → Sessions copy its path for you). The
+  extension then asks Island to connect: during setup Island lets it in, otherwise press **Allow** in the island.
+  After updating Island, press the extension's reload arrow there and reload your chat tabs.
 
 Claude Code reads its hooks when a session starts: sessions that were already running pick up new hooks after
 you restart them.
 
 ## Developing
 
-Everything is built from WSL, so nothing extra is installed on Windows:
+On Windows, with Node.js 20+ and the .NET 9 SDK (once: `winget install OpenJS.NodeJS.LTS Microsoft.DotNet.SDK.9`):
 
-- `bash tools/setup.sh`: packages + helper (run again after pulling changes).
-- `bash tools/build-helper.sh`: only the helper (quit Island first, Windows locks the running helper).
+```powershell
+git clone https://github.com/13abayev/DynoIsland.git island
+cd island
+npm run setup   # packages and the Windows helper (again after pulling changes)
+npm start       # Island from this folder (the first start adds it to the Start menu)
+```
+
+- `npm run build:helper`: only the helper (quit Island first, Windows locks the running helper).
+- `npm run package`: the zip in `dist\` that colleagues install from (`tools/package.ps1`; `-NoBuild` packs the
+  helper already in `bin\helper`). A tag like `v0.3.0` pushed to GitHub builds it there and attaches it to the
+  release (`.github/workflows/release.yml`). Bump `version` in `package.json` first.
 - Restart Island after changing anything in `src/`.
 - `src/renderer/index.html?demo` (served by any static server) shows the island with sample data; add
-  `&view=clipboard` (or `prompt`, `notes`, `focus`, `settings`) to open a page.
+  `&view=clipboard` (or `prompt`, `notes`, `focus`, `settings`, `setup`) to open a page, and `&fresh` for a new PC.
+- `ISLAND_NO_WSL=1` makes Island act as on a PC without WSL; `ISLAND_DATA=<folder>` gives it an empty data folder
+  (to try setup as a new user).
 - Errors that would otherwise stop Island go to `%APPDATA%\Island\island.log`.
+- The icon is `assets/island.svg`; `node_modules\electron\dist\electron.exe tools\make-icon.js` makes its .png and .ico.
 
 ### Why `dotnet IslandHelper.dll` and not an .exe
 
 Smart App Control blocks unsigned programs it has never seen, and a program built on your own PC is always
-new. Microsoft's `dotnet.exe` running the helper's code is allowed.
+new. Microsoft's `dotnet.exe` running the helper's code is allowed. For the same reason the installed
+`Island.exe` is Electron's own `electron.exe`, only renamed: changing its name or icon inside would make it a
+program Windows has never seen.
 
 ### How it fits together
 
 ```
-src/main/main.js      starts everything: hotkeys, notifications, reminders, translate, paste
+src/main/main.js      starts everything: hotkeys, notifications, reminders, translate, paste, uninstall
+src/main/paths.js     where Island's own files are (project folder, or installed with its own .NET)
+src/main/install.js   installing from the zip, Settings → Apps, uninstalling, looking for updates
+src/main/checks.js    what Island needs from you, for setup and the dots on settings tabs
+src/main/win.js       the registry, and whether WSL is installed
 src/main/islands.js   one island window per chosen display
 src/main/sessions.js  the session hub: states, seen-detection, reminders, answers and replies
 src/main/server.js    127.0.0.1:47900, only with your token: hooks post (and wait for answers) here
@@ -283,7 +295,8 @@ src/main/phone.js     your phone, through your own Telegram bot
 src/main/jump.js      bringing back a session's window or tab
 src/renderer/         the island: core.js + island.js, and one *-ui.js per part (sessions, jobs, prompt,
                       clipboard, shelf, phone, notes, focus, media, volume bar, batteries, meeting, translate, mascot,
-                      settings)
+                      settings, setup)
+tools/                setup.ps1, build-helper.ps1, package.ps1 (the zip), make-icon.js
 helper/               C# helper: windows, keys, clipboard changes and copied files, media controls, sound,
                       brightness, AirPods battery, mic, OCR, Outlook, and the Windows hook / reply / status line
 hooks/linux/          hook, reply, status line, the island command (island.py) and settings merge for WSL and
@@ -309,8 +322,11 @@ jobs, the shelf and your phone's bot.
   the detection at the top of `extension/content.js` may need an update.
 - **The ChatGPT and Claude desktop apps** (normal chats, not Claude Code) are not tracked. Use those chats in
   the browser.
-- **Hotkeys with Ctrl+Alt** are the same as AltGr on some keyboard layouts; if one clashes with a character
-  you type, tell Island (it logs a hotkey another app already uses).
+- **Hotkeys with Ctrl+Alt** are the same as AltGr on some keyboard layouts. A hotkey another app took first is
+  marked in settings → General → Hotkeys.
+- **Task Manager** names Island "Electron": its program is Electron's own, unchanged (see above). The Start menu,
+  notifications and Settings → Apps say Island.
+- **The browser extension** is loaded unpacked (Developer mode): it is not in the Chrome Web Store.
 - **Shared SSH servers**: other users on that server can reach the tunnel port there. Island's token keeps
   them out. If someone else already uses port 47900 on a server, the settings page says the port is busy.
 

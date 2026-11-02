@@ -61,15 +61,17 @@ async function keepRegistered() {
 
 /**
  * Copies this Island into the install folder (over an older one: Island is not running there, or this one would not
- * have started), registers it, starts it from there and quits this one.
+ * have started), registers it, starts it from there and quits this one. letGo() first frees what the installed
+ * Island needs for itself (the port, the hotkeys).
  */
-async function install() {
+async function install(letGo) {
   const to = paths.INSTALL_DIR, fresh = to + '.new';
   await fs.promises.rm(fresh, { recursive: true, force: true });
   await fs.promises.cp(here(), fresh, { recursive: true });
   await fs.promises.rm(to, { recursive: true, force: true });
   await fs.promises.rename(fresh, to);
   await register(to);
+  await letGo();
   app.releaseSingleInstanceLock(); // the installed Island takes over
   spawn(path.join(to, 'Island.exe'), [], { detached: true, stdio: 'ignore', cwd: to }).unref();
   setTimeout(() => app.exit(0), 500);

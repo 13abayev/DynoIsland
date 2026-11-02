@@ -21,7 +21,7 @@ function render() {
   renderBar(top, right);
   if (open) {
     const page = ui.pages[view] || ui.pages.sessions;
-    cardsEl.innerHTML = page.bare ? '' : ui.cards.map(f => f()).join('');
+    cardsEl.innerHTML = (page.bare ? ui.cards.filter(f => f.urgent) : ui.cards).map(f => f()).join('');
     const tabs = Object.entries(ui.pages).filter(([, p]) => p.tab).sort((a, b) => a[1].order - b[1].order);
     tabsEl.innerHTML = page.tabs ? page.tabs() : page.bare ? ''
       : tabs.map(([id, p]) => `<button class="tab${id === view ? ' on' : ''}" data-go="${id}">${esc(p.label)}</button>`).join('');
@@ -153,7 +153,7 @@ island.addEventListener('click', async e => {
   if (g) { go(g.dataset.go); return; }
   if (t.closest('#bar')) {
     if (t.closest('button')) { for (const f of ui.barClick) if (await f(e)) return; return; }
-    if (!open) { setOpen(true, true); api.focusWindow(); }
+    if (!open) { setOpen(true, true, barItem()?.go || null); api.focusWindow(); }
     else if (pinned) setOpen(false);
     else { pinned = true; api.focusWindow(); }
     return;
@@ -263,7 +263,7 @@ api.onToggle(({ open: force, view: page } = {}) => {
   if (force || !open || !pinned) setOpen(true, true);
   else setOpen(false);
 });
-api.onBlur(() => { if (open && pinned) setOpen(false); });
+api.onBlur(() => { if (open && pinned && !ui.pages[view]?.sticky) setOpen(false); }); // setup stays while you go to other apps
 api.onIdentify(n => showNote(`Display ${n}`, 3200));
 
 setInterval(() => { if (!(open && document.activeElement?.closest?.('#body') && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) render(); }, 20000);

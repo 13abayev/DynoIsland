@@ -12,7 +12,7 @@ const PORT = 47900;
 const ANSWER_WAIT = 25 * 60 * 1000; // a permission prompt waits this long for your answer in the island
 const REPLY_WAIT = 3 * 60 * 60 * 1000; // a finished session waits this long for your reply
 
-function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug }) {
+function startServer({ hub, jobs, token, settings, onExtChange, onJump, onPair = async () => false, debug }) {
   const expected = Buffer.from(token);
   const okToken = v => {
     const given = Buffer.from(String(v || ''));
@@ -85,6 +85,8 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug })
     } else if (url.pathname === '/debug/identify') {
       debug.identify(); // the same as "Identify displays" in settings (for testing)
       json(res, 200, { ok: true });
+    } else if (url.pathname === '/debug/click') {
+      json(res, 200, { clicked: await debug.click(String(data.selector || '')) }); // clicks a button in the open island (for testing)
     } else if (url.pathname === '/debug/open') {
       debug.open(String(data.view || '')); // opens the island on a page, like "settings:sessions" (for testing)
       json(res, 200, { ok: true });
@@ -111,9 +113,17 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug })
     wss.handleUpgrade(req, socket, head, ws => {
       let authed = false;
       const giveUp = setTimeout(() => { if (!authed) ws.close(); }, 5000);
-      ws.on('message', raw => {
+      ws.on('message', async raw => {
         let m;
         try { m = JSON.parse(raw); } catch { return; }
+        if (!authed && m.type === 'pair') {
+          // a new extension asks for the token: it gets it once you allow it in the island (setup allows it itself)
+          clearTimeout(giveUp);
+          const yes = await onPair();
+          if (ws.readyState === 1) ws.send(JSON.stringify(yes ? { type: 'token', token } : { type: 'denied' }));
+          ws.close();
+          return;
+        }
         if (!authed) {
           if (m.type !== 'hello' || !okToken(m.token)) { ws.close(4001, 'wrong token'); return; }
           authed = true;
@@ -133,14 +143,25 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug })
     });
   });
 
-  server.on('error', e => console.error('Island server:', e.message));
+  let tries = 0;
+  server.on('error', e => {
+    // the Island before this one is still letting go of the port (it restarted, or this one was just installed)
+    if (e.code === 'EADDRINUSE' && tries++ < 30) { setTimeout(() => server.listen(PORT, '127.0.0.1'), 500); return; }
+    console.error('Island server:', e.message);
+  });
   server.listen(PORT, '127.0.0.1');
 
   return {
     port: PORT,
     sendExt(m) { for (const ws of exts) ws.send(JSON.stringify(m)); return exts.size > 0; },
     extConnected: () => exts.size > 0,
-    close: () => server.close(),
+    /** Lets go of the port right away; resolves when the open connections are closed too (or after 1.5 s). */
+    close: () => new Promise(resolve => {
+      for (const ws of exts) ws.terminate();
+      server.close(() => resolve());
+      server.closeAllConnections();
+      setTimeout(resolve, 1500);
+    }),
   };
 }
 

@@ -66,8 +66,10 @@ function browserRow() {
   const on = !!state.ext;
   let h = settingRow('ChatGPT and Claude in the browser', 'Chrome or Edge, with Island\'s extension', on ? statusPill('ok', 'Connected') : '');
   if (!on) h += '<div class="setup-box"><ol class="steps"><li>Open <b>chrome://extensions</b> (or edge://extensions) and turn on <b>Developer mode</b>.</li>' +
-    '<li>Choose <b>Load unpacked</b> and pick Island\'s extension folder.</li><li>Click the Island extension and paste your token.</li></ol>' +
-    '<div class="btns"><button class="btn" data-cmd="ext-folder">Open extension folder</button><button class="btn" data-cmd="copy-token">Copy token</button></div></div>';
+    '<li>Choose <b>Load unpacked</b> and pick Island\'s extension folder (paste its path into the folder window).</li>' +
+    '<li>The extension asks Island to connect: press <b>Allow</b> in the island.</li></ol>' +
+    '<div class="btns"><button class="btn" data-cmd="copy-ext-path">Copy folder path</button><button class="btn" data-cmd="ext-folder">Open folder</button>' +
+    '<button class="btn" data-cmd="copy-token" title="For the extension\'s popup, if it cannot ask Island itself">Copy token</button></div></div>';
   return h;
 }
 
@@ -171,6 +173,7 @@ ui.pages.settings = {
     if (cmd === 'identify') { api.identifyDisplays(); return true; }
     if (cmd === 'copy-token') { await api.copyToken(); showNote('Token copied'); return true; }
     if (cmd === 'ext-folder') { api.openExtensionFolder(); return true; }
+    if (cmd === 'copy-ext-path') { await api.copyText(state.app?.extensionDir || ''); showNote('Folder path copied'); return true; }
     if (cmd === 'data-folder') { api.openDataFolder(); return true; }
     if (cmd === 'uninstall') { api.uninstall(); return true; }
     if (cmd === 'update-open') { api.openLink(state.app?.update?.url); return true; }

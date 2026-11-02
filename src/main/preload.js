@@ -83,4 +83,11 @@ contextBridge.exposeInMainWorld('islandApi', {
   uninstall: () => ipcRenderer.invoke('app:uninstall'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
   openDataFolder: () => ipcRenderer.invoke('app:open-data'),
+  // setup
+  detect: () => ipcRenderer.invoke('setup:detect'),
+  extPairing: on => ipcRenderer.invoke('setup:ext-pairing', !!on),
+  openExtensions: browser => ipcRenderer.invoke('setup:open-extensions', browser),
+  answerExtension: yes => ipcRenderer.invoke('ext:pair-answer', !!yes),
+  sshKeyLogin: alias => ipcRenderer.invoke('ssh:key-login', alias),
+  openNotificationSettings: () => ipcRenderer.invoke('open-windows-settings'),
 });

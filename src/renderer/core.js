@@ -4,12 +4,15 @@
 //
 //   ui.pages   id → { label, tab, order, render(), click(e), change(e), keydown(e), opened(arg) }
 //              a page of the open island; pages with a label and tab: true get a tab. A page can also have
-//              bare: true (no cards above it), title (in the bar) and tabs() → html (its own tab strip).
+//              bare: true (no cards above it), title (in the bar), tabs() → html (its own tab strip) and
+//              sticky: true (stays open when you click another app).
 //              "page:arg" (data-go="settings:phone") opens a page with opened(arg)
-//   ui.cards   () → html, shown above the pages of the open island (now playing, next meeting, …)
+//   ui.cards   () → html, shown above the pages of the open island (now playing, next meeting, …); one marked
+//              urgent (f.urgent = true) shows above bare pages (settings, setup) too
 //   ui.sections () → html, extra sections at the top of the Sessions page (your jobs, …)
-//   ui.bar     () → { priority, lead, text, chips, cls, mood, keepLead } what the closed island can show; the
-//              highest priority wins (keepLead: its own lead stays, instead of the mascot)
+//   ui.bar     () → { priority, lead, text, chips, cls, mood, keepLead, go } what the closed island can show; the
+//              highest priority wins (keepLead: its own lead stays, instead of the mascot; go: clicking the closed
+//              island opens that page)
 //   ui.right   () → html, small things at the right of the bar (limits rings, the mic dot, …)
 //   ui.settings { tab, order, render() → html } sections of the settings page, on one of its tabs (general,
 //              sessions, alerts, phone, tools, devices; settings-ui.js), sorted by order
@@ -153,6 +156,17 @@ function demoApi() {
   };
   demo.settings.sshServers = ['gpu-server', 'build-box'];
   demo.settings.serverDirs = { 'gpu-server': '~/data' };
+  // index.html?demo&fresh: a new PC (Island from the zip, nothing set up yet), with setup open
+  const fresh = /fresh/.test(location.search);
+  Object.assign(demo.settings, { setupDone: !fresh, setupStep: '', setupSkipped: [] });
+  if (fresh) Object.assign(demo, { ext: false, phone: { configured: false }, app: { ...demo.app, installed: false, canInstall: true } });
+  demo.checks = [
+    { id: 'tools', tab: 'sessions', state: fresh ? 'action' : 'ok', detail: fresh ? 'Nothing is connected yet' : '3 connected' },
+    { id: 'browser', tab: 'sessions', state: demo.ext ? 'ok' : 'off' },
+    { id: 'phone', tab: 'phone', state: fresh ? 'off' : 'ok' },
+    { id: 'notifications', tab: 'alerts', state: fresh ? 'ok' : 'action', detail: fresh ? '' : 'Windows has notifications off for Island' },
+  ];
+  const freshStatus = { windows: false, wslInstalled: true, distro: 'Ubuntu', wsl: { claude: false, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: false, tunnel: null }] };
   const demoShelf = [
     { id: 's1', path: 'C:\\Users\\you\\Downloads\\From phone\\photo-2026-10-30.jpg', name: 'photo-2026-10-30.jpg', size: 2480000, at: now - 3 * m, from: 'phone', icon: '' },
     { id: 's2', path: 'C:\\Users\\you\\Datasets\\dev-clean.tar.gz', name: 'dev-clean.tar.gz', size: 337000000, at: now - 20 * m, from: 'pc', icon: '', send: { to: 'gpu-server:~/data', state: 'sending', at: now - 40e3 } },
@@ -173,8 +187,20 @@ function demoApi() {
   ];
   const known = {
     connectStatus: async () => ({ windows: false, wslInstalled: true, distro: 'Ubuntu', wsl: { claude: true, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: true, tunnel: { state: 'open' } }, { alias: 'gpu-box', connected: false, tunnel: null }] }),
-    connect: async () => ({ ok: false, error: 'Demo mode', status: null }),
-    setSettings: async p => p,
+    connect: async (target, on, arg) => {
+      await new Promise(r => setTimeout(r, 700));
+      return target === 'ssh' ? { ok: false, error: `Could not log in to ${arg} without a password. Connect once from VS Code or a terminal, then try again.` } : { ok: true };
+    },
+    setSettings: async p => { Object.assign(demo.settings, p); fire('state', demo); return demo.settings; },
+    detect: async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return {
+        claudeWindows: true, wsl: { installed: true, distros: ['Ubuntu'], default: 'Ubuntu' }, inWsl: { claude: true, codex: false },
+        status: fresh ? freshStatus : await known.connectStatus(), claudeIn: 'win', browsers: ['chrome', 'edge'],
+        extensionDir: 'C:\\Users\\you\\AppData\\Local\\Programs\\Island\\resources\\app\\extension',
+      };
+    },
+    install: async () => ({ ok: false, error: 'Demo mode' }),
     refreshLimits: async () => { await new Promise(r => setTimeout(r, 800)); demo.usage = { ...demo.usage, at: Date.now() }; fire('state', demo); },
     displays: async () => demoDisplays,
     setDisplays: async ids => demoDisplays.map(d => Object.assign(d, { shown: ids.includes(d.id) })),

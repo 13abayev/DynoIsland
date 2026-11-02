@@ -14,6 +14,8 @@ class Helper extends EventEmitter {
     this.nextId = 1;
     this.pending = new Map();
     this.restarts = 0;
+    this.running = false; // it said it is ready, and has not stopped since
+    this.startedAt = Date.now();
     this.start();
   }
 
@@ -27,10 +29,14 @@ class Helper extends EventEmitter {
       if (m.type === 'reply') {
         const p = this.pending.get(m.id);
         if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.resolve(m.result || {}); }
-      } else if (m.type) this.emit(m.type, m); // foreground, clipboard, media, volume, mic, level
+      } else if (m.type) {
+        if (m.type === 'ready') this.running = true;
+        this.emit(m.type, m); // ready, foreground, clipboard, media, volume, mic, level
+      }
     });
     child.on('exit', () => {
       this.child = null;
+      this.running = false;
       for (const p of this.pending.values()) p.resolve({ ok: false, error: 'helper stopped' });
       this.pending.clear();
       if (!this.stopped && this.restarts++ < 5) setTimeout(() => this.start(), 2000);

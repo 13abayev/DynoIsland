@@ -57,7 +57,8 @@ function windowsConnected() {
  * folder). Returns whether it did.
  */
 function repairWindows({ takeOver = false } = {}) {
-  const hooks = ourHooks(readJson(winSettingsFile()));
+  const s = readJson(winSettingsFile());
+  const hooks = [...ourHooks(s), ...(isOurs(s.statusLine) ? [s.statusLine] : [])];
   if (!hooks.length || !fs.existsSync(HELPER) || hooks.every(h => h.command.startsWith(RUN_HELPER))) return false;
   const gone = hooks.some(h => { const dll = /"([^"]*IslandHelper\.dll)"/.exec(h.command)?.[1]; return !dll || !fs.existsSync(dll); });
   if (!gone && !takeOver) return false;
@@ -76,7 +77,8 @@ function windowsConnect(on) {
     // answering from the island: permission prompts wait for your answer there, finished sessions for your reply
     add('PermissionRequest', { command: `${RUN_HELPER} hook claude wait`, timeout: 1800 });
     add('Stop', { command: `${RUN_HELPER} reply claude`, asyncRewake: true, timeout: 10800 });
-    if (!s.statusLine) s.statusLine = { type: 'command', command: `${RUN_HELPER} statusline claude` };
+    // Island's status line, unless you have one of your own (Island's own one from before is replaced)
+    if (!s.statusLine || isOurs(s.statusLine)) s.statusLine = { type: 'command', command: `${RUN_HELPER} statusline claude` };
   } else if (isOurs(s.statusLine)) delete s.statusLine;
   writeFileKeepingBackup(file, JSON.stringify(s, null, 2) + '\n');
 }
@@ -189,6 +191,14 @@ async function status() {
   return { windows, wslInstalled: info.installed, distro: info.default, wsl: inWsl, ssh: sshHosts().map(h => ({ alias: h.alias })), helper, helperMissing: helper ? '' : HELPER_MISSING };
 }
 
+/** For setup: which agents are in WSL ({ claude, codex }, or null without WSL or when it did not answer). */
+async function detectWsl() {
+  if (!(await wslInfo()).installed) return null;
+  const has = name => `{ [ -d "$HOME/.${name}" ] || command -v ${name} >/dev/null; } && echo true || echo false`;
+  const r = await wsl(`printf '{"claude": %s, "codex": %s}\\n' "$(${has('claude')})" "$(${has('codex')})"\n`);
+  try { return r.code === 0 ? parseResult(r, 'WSL') : null; } catch { return null; }
+}
+
 async function connect(target, on, arg, token) {
   if (target === 'windows') windowsConnect(on);
   else if (target === 'wsl-claude' || target === 'wsl-codex') {
@@ -211,4 +221,4 @@ async function connect(target, on, arg, token) {
   return status();
 }
 
-module.exports = { status, connect, sshHosts, takeOverOldTunnelLines, windowsConnect, windowsConnected, repairWindows };
+module.exports = { status, connect, detectWsl, sshHosts, takeOverOldTunnelLines, windowsConnect, windowsConnected, repairWindows };

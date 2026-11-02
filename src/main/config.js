@@ -29,6 +29,9 @@ const DEFAULTS = {
   translateAlt: '', // …or into this one when the text is already in the first (empty: none)
   claudeIn: 'auto', // where translations run Claude Code: 'auto' (Windows, else WSL), 'windows', 'wsl' or a server's alias
   checkUpdates: true, // look for a newer Island on GitHub once a day (install.js)
+  setupDone: false, // the first-start setup in the island (setup-ui.js) was finished
+  setupStep: '', // where setup was left (it goes on there, also after installing restarted Island)
+  setupSkipped: [], // setup steps you skipped: their settings tab keeps a dot until they are done (checks.js)
   displays: [], // the displays (ids) that show an island; none chosen = the main display (islands.js)
   sshServers: [], // servers you connected: Island keeps a tunnel open to each (set by Connect, not by hand)
 };
@@ -52,6 +55,8 @@ function settings() {
   if (cached) return cached;
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(path.join(dataDir(), 'settings.json'), 'utf8')); } catch {}
+  // settings from an Island older than setup: that Island was set up by hand already
+  if (Object.keys(saved).length && !('setupDone' in saved)) saved.setupDone = true;
   return (cached = { ...DEFAULTS, ...saved });
 }
 

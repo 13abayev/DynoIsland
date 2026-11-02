@@ -6,8 +6,9 @@
 // notifications and reminders.
 const { app, Menu, Notification, dialog, globalShortcut, ipcMain, nativeImage, powerMonitor, screen, shell } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const config = require('./config');
 const paths = require('./paths');
 const { reg } = require('./win');
@@ -28,6 +29,8 @@ const connect = require('./connect');
 const quick = require('./quick');
 const clip = require('./clip-io');
 const install = require('./install');
+const checks = require('./checks');
+const { wslInfo } = require('./win');
 
 const APP_ID = 'local.island';
 // Island's own id for its notifications (Island.lnk carries it; without a fixed one Electron makes up a new one
@@ -54,7 +57,8 @@ const hotkeyList = () => Object.entries(HOTKEYS_WHAT).map(([id, what]) => ({ key
 
 app.setAppUserModelId(APP_ID);
 app.setToastActivatorCLSID(TOAST_CLSID);
-app.setPath('userData', path.join(app.getPath('appData'), 'Island'));
+// ISLAND_DATA: another folder for Island's data (to try setup as a new user, without touching yours)
+app.setPath('userData', process.env.ISLAND_DATA || path.join(app.getPath('appData'), 'Island'));
 
 // an unexpected error in one part must not stop Island or interrupt you with a dialog: it goes to island.log
 function logError(e) {
@@ -90,7 +94,7 @@ function start() {
   const token = config.token();
   hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
   jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
-  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null) } });
+  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland } });
   helper = new Helper(paths.HELPER_DLL);
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
@@ -132,7 +136,10 @@ function start() {
     if (install.isInstalled()) install.keepRegistered().catch(logError);
   }
   checkUpdate = watchUpdates();
+  watchChecks();
   wireIpc(token);
+  // the first start (or Island started from the zip): setup, in the island
+  if (!config.settings().setupDone || install.canInstall()) setTimeout(() => openIsland(false, 'setup'), 2500);
 }
 
 // ---------- what the helper tells us ----------
@@ -182,10 +189,18 @@ async function islandsInfo() {
          volume: state.volume, mic: state.mic, batteries: state.batteries, meetings: (state.meetings || []).length, meetingsStatus: state.meetingsStatus,
          timers: (state.timers || []).length, focus: state.focus, pages: Object.keys(ui.pages),
          jobs: (state.jobs || []).map(j => [j.name, j.state, j.percent, j.last].join(' | ')), phone: state.phone, hud,
-         open, view, tabs: document.getElementById('tabs').innerText.split('\\n').join(' | '), body: open ? document.getElementById('body').innerText.slice(0, 3000) : '' })`,
+         open, view, tabs: document.getElementById('tabs').innerText.split('\\n').join(' | '), body: open ? document.getElementById('body').innerText.slice(0, 3000) : '',
+         cards: open ? document.getElementById('cards').innerText.slice(0, 500) : '', checks: state.checks, setupDone: state.settings.setupDone })`,
     ).catch(e => ({ error: e.message })),
   })));
   return { fullscreenOn, clipEvents, clips: clips.items.length, windows, displays: islands?.list() };
+}
+
+/** For testing (/debug/click): clicks what `selector` finds in the open island, as you would. */
+async function clickInIsland(selector) {
+  const js = `(() => { const el = open && document.querySelector(${JSON.stringify(selector)}); if (el) el.click(); return !!el; })()`;
+  const hits = await Promise.all((islands?.all() || []).map(w => w.webContents.executeJavaScript(js).catch(() => false)));
+  return hits.some(Boolean);
 }
 
 let stateTimer = null;
@@ -206,6 +221,8 @@ function sendState() {
       hotkeys: HOTKEYS_SHOWN,
       hotkeyList: hotkeyList(),
       app: appInfo(),
+      checks: checkList(),
+      extAsking: pairWaiters.length > 0,
     };
     for (const w of islands.all()) w.webContents.send('state', { ...state, fullscreen: w.displayId === fullscreenOn });
   }, 60);
@@ -490,7 +507,87 @@ async function connectStatus() {
   const status = await connect.status();
   const servers = config.settings().sshServers;
   status.ssh = status.ssh.map(h => ({ ...h, connected: servers.includes(h.alias), tunnel: tunnels.state(h.alias) }));
+  connCache = status; // for the checks (they never start WSL themselves)
+  windowsHooked = status.windows;
+  wslThere = status.wslInstalled;
+  sendState();
   return status;
+}
+
+// ---------- setup, and what Island needs from you ----------
+let connCache = null, windowsHooked = false, wslThere = false, refreshChecks = null;
+const pairWaiters = []; // browser extensions asking to connect, waiting for your answer in the island
+let extPairingUntil = 0; // setup's browser step shows: an extension that asks gets in without asking you
+
+function checkList() {
+  return checks.list({
+    settings: config.settings(), windowsConnected: windowsHooked, conn: connCache, wslInstalled: wslThere, ext: server.extConnected(),
+    phone: phone.status(), helper, hotkeysTaken: [...hotkeysTaken].map(k => k.replace('Control', 'Ctrl')),
+  });
+}
+
+/** Looks at what the checks need now and then (Windows notifications, the Windows hooks, WSL). */
+function watchChecks() {
+  const look = async () => {
+    try { windowsHooked = connect.windowsConnected(); } catch { windowsHooked = false; }
+    wslThere = (await wslInfo()).installed;
+    await checks.readNotifications();
+    sendState();
+  };
+  look().catch(logError);
+  setInterval(() => look().catch(logError), 5 * 60 * 1000);
+  powerMonitor.on('resume', () => look().catch(logError));
+  refreshChecks = look;
+}
+
+/** A browser extension asks to connect (server.js): yes while setup's browser step shows, else when you allow it. */
+function pairExtension() {
+  if (Date.now() < extPairingUntil) return Promise.resolve(true);
+  return new Promise(resolve => {
+    pairWaiters.push(resolve);
+    setTimeout(() => {
+      const i = pairWaiters.indexOf(resolve);
+      if (i >= 0) { pairWaiters.splice(i, 1); resolve(false); sendState(); }
+    }, 2 * 60 * 1000);
+    sendState();
+    if (pairWaiters.length === 1) openIsland(false);
+  });
+}
+
+function answerPair(yes) {
+  for (const resolve of pairWaiters.splice(0)) resolve(!!yes);
+  sendState();
+}
+
+const BROWSERS = {
+  chrome: ['ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA'].map(v => process.env[v] && path.join(process.env[v], 'Google', 'Chrome', 'Application', 'chrome.exe')),
+  edge: ['ProgramFiles(x86)', 'ProgramFiles'].map(v => process.env[v] && path.join(process.env[v], 'Microsoft', 'Edge', 'Application', 'msedge.exe')),
+};
+const browserExe = id => (BROWSERS[id] || []).find(p => p && fs.existsSync(p));
+
+/** What setup finds on this PC: Claude Code and Codex (on Windows, in WSL), browsers, servers. */
+async function detect() {
+  const [wsl, inWsl, status, runIn] = await Promise.all([wslInfo(), connect.detectWsl(), connectStatus(), quick.place('auto')]);
+  return {
+    claudeWindows: !!quick.windowsClaude() || fs.existsSync(path.join(os.homedir(), '.claude')),
+    wsl, inWsl, status, claudeIn: runIn?.src || '',
+    browsers: Object.keys(BROWSERS).filter(browserExe),
+    extensionDir: paths.EXTENSION_DIR,
+  };
+}
+
+/** A terminal that sets up key login to a server: makes a key if there is none and copies it there (you type its password once). */
+function sshKeyLogin(alias) {
+  if (!/^[\w.@-]+$/.test(alias) || !connect.sshHosts().some(h => h.alias === alias)) return false;
+  const key = path.join(os.homedir(), '.ssh', 'id_ed25519');
+  const script = [
+    `Write-Host 'Island: key login to ${alias}. Type the server password when it asks.'`,
+    `if (-not (Test-Path '${key}')) { ssh-keygen -t ed25519 -N '""' -f '${key}' }`,
+    `Get-Content '${key}.pub' | ssh ${alias} 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'`,
+    `if ($LASTEXITCODE -eq 0) { Write-Host 'Done. Go back to Island and press Connect.' } else { Write-Host 'That did not work (see above).' }`,
+  ].join('\n');
+  spawn('powershell.exe', ['-NoExit', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { detached: true, stdio: 'ignore' }).unref();
+  return true;
 }
 
 // ---------- installing, uninstalling, updates ----------
@@ -500,7 +597,7 @@ let installedThere = null; // the version already in the install folder (when th
 function appInfo() {
   const canInstall = install.canInstall();
   if (canInstall && installedThere === null) installedThere = install.installedVersion();
-  return { version: app.getVersion(), installed: install.isInstalled(), canInstall, installedVersion: canInstall ? installedThere : '', update };
+  return { version: app.getVersion(), installed: install.isInstalled(), canInstall, installedVersion: canInstall ? installedThere : '', update, extensionDir: paths.EXTENSION_DIR };
 }
 
 /** Looks for a newer Island on GitHub soon after start, then once a day (settings: checkUpdates). */
@@ -718,10 +815,20 @@ function wireIpc(token) {
   handle('copy-token', async () => { await clip.writeText(token); return true; });
   handle('open-extension-folder', () => shell.openPath(paths.EXTENSION_DIR));
   // Island itself: installing it (from the zip), uninstalling it, updates
-  handle('app:install', async () => { try { await install.install(); return { ok: true }; } catch (e) { logError(e); return { ok: false, error: e.message }; } });
+  handle('app:install', async () => {
+    const letGo = async () => { globalShortcut.unregisterAll(); tunnels?.stop(); helper?.stop(); await server.close(); };
+    try { await install.install(letGo); return { ok: true }; } catch (e) { logError(e); return { ok: false, error: e.message }; }
+  });
   handle('app:uninstall', () => uninstall());
   handle('app:check-update', async () => { await checkUpdate?.(); sendState(); return update; });
   handle('app:open-data', () => shell.openPath(config.dataDir()));
+  // setup
+  handle('setup:detect', async () => { refreshChecks?.(); return detect(); });
+  handle('setup:ext-pairing', on => { extPairingUntil = on ? Date.now() + 15 * 60 * 1000 : 0; if (on && pairWaiters.length) answerPair(true); });
+  handle('setup:open-extensions', id => { const exe = browserExe(id); if (exe) spawn(exe, [`${id}://extensions`], { detached: true, stdio: 'ignore' }).unref(); });
+  handle('ext:pair-answer', yes => answerPair(yes));
+  handle('ssh:key-login', alias => sshKeyLogin(String(alias || '')));
+  handle('open-windows-settings', () => shell.openExternal('ms-settings:notifications'));
   ipcMain.on('menu', e => {
     const w = islands.fromSender(e.sender);
     Menu.buildFromTemplate([
