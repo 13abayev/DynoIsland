@@ -10,6 +10,9 @@ Push-Location $root
 try {
   & npm.cmd install --no-audit --no-fund
   if ($LASTEXITCODE) { throw 'npm install failed' }
+  # Electron fetches its program file the first time it is used: now, so Island starts at once
+  & node node_modules\electron\install.js
+  if ($LASTEXITCODE) { throw 'Getting Electron failed' }
 } finally { Pop-Location }
 
 & (Join-Path $PSScriptRoot 'build-helper.ps1')

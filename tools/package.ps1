@@ -11,7 +11,12 @@ $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path $PSScriptRoot
 $version = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
 $electron = Join-Path $root 'node_modules\electron\dist'
-if (-not (Test-Path "$electron\electron.exe")) { throw 'Electron is missing: run "npm run setup" first.' }
+if (-not (Test-Path "$electron\electron.exe")) {
+  # Electron fetches its program file the first time it is used, not when npm installs it
+  if (-not (Test-Path (Join-Path $root 'node_modules\electron\install.js')) -or -not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Electron is missing: run "npm run setup" first.' }
+  & node (Join-Path $root 'node_modules\electron\install.js')
+  if ($LASTEXITCODE -or -not (Test-Path "$electron\electron.exe")) { throw 'Getting Electron failed.' }
+}
 
 $dist = Join-Path $root 'dist'
 $stage = Join-Path $dist 'Island'
