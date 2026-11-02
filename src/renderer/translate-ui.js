@@ -1,6 +1,7 @@
 'use strict';
 // Translate (Ctrl+Alt+T): select text anywhere, press the hotkey, and the translation shows in the island.
-// Claude Code does the translating (Haiku, in WSL), so no extra account is needed.
+// Claude Code does the translating (Haiku, on Windows, in WSL or on a server: settings.claudeIn), so no extra
+// account is needed.
 
 let translation = null; // { status: 'working' | 'done' | 'error', source, text, error }
 
@@ -28,5 +29,5 @@ api.onTranslation(t => { translation = t; render(); });
 
 ui.settings.push(() => '<div class="set"><div class="set-title">Translate</div>' +
   `<div class="opt"><div class="what"><div>Translate into</div></div><input class="field small-wide" data-set="translateTo" value="${esc(state.settings?.translateTo || 'English')}"></div>` +
-  `<div class="opt"><div class="what"><div>Text already in that language goes into</div></div><input class="field small-wide" data-set="translateAlt" value="${esc(state.settings?.translateAlt || 'Azerbaijani')}"></div>` +
-  '<div class="hint">Select text anywhere and press Ctrl+Alt+T. Claude Code (Haiku, in WSL) translates it; nothing is kept in your Claude history.</div></div>');
+  `<div class="opt"><div class="what"><div>Text already in that language goes into</div></div><input class="field small-wide" data-set="translateAlt" placeholder="none" value="${esc(state.settings?.translateAlt || '')}"></div>` +
+  '<div class="hint">Select text anywhere and press Ctrl+Alt+T. Claude Code (Haiku) translates it; nothing is kept in your Claude history.</div></div>');

@@ -11,12 +11,11 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { PORT } = require('./server');
-const { DOTNET } = require('./helper');
+const { DOTNET, HELPER_DLL, HELPER_MISSING, LINUX_HOOKS: LINUX } = require('./paths');
+const { wslInfo } = require('./win');
 
-const ROOT = path.join(__dirname, '..', '..');
-const HELPER = path.join(ROOT, 'bin', 'helper', 'IslandHelper.dll').replace(/\\/g, '/');
+const HELPER = HELPER_DLL.replace(/\\/g, '/');
 const RUN_HELPER = `"${DOTNET.replace(/\\/g, '/')}" "${HELPER}"`;
-const LINUX = path.join(ROOT, 'hooks', 'linux');
 const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
 // ---------- Claude Code on Windows ----------
@@ -46,16 +45,31 @@ function stripHooks(settings) {
   if (Object.keys(hooks).length) settings.hooks = hooks; else delete settings.hooks;
 }
 
+const ourHooks = s => Object.values(s.hooks || {}).flatMap(groups => (groups || []).flatMap(g => (g.hooks || []).filter(isOurs)));
+
 function windowsConnected() {
-  const s = readJson(winSettingsFile());
-  return Object.values(s.hooks || {}).some(groups => (groups || []).some(g => (g.hooks || []).some(isOurs)));
+  return ourHooks(readJson(winSettingsFile())).length > 0;
+}
+
+/**
+ * At start: hooks that run a helper somewhere else are written again for this one, when that helper is gone (Island
+ * moved, or its project folder was deleted) or when this is the installed Island (it takes over from the project
+ * folder). Returns whether it did.
+ */
+function repairWindows({ takeOver = false } = {}) {
+  const hooks = ourHooks(readJson(winSettingsFile()));
+  if (!hooks.length || !fs.existsSync(HELPER) || hooks.every(h => h.command.startsWith(RUN_HELPER))) return false;
+  const gone = hooks.some(h => { const dll = /"([^"]*IslandHelper\.dll)"/.exec(h.command)?.[1]; return !dll || !fs.existsSync(dll); });
+  if (!gone && !takeOver) return false;
+  windowsConnect(true);
+  return true;
 }
 
 function windowsConnect(on) {
   const file = winSettingsFile(), s = readJson(file);
   stripHooks(s);
   if (on) {
-    if (!fs.existsSync(HELPER)) throw new Error('The helper is not built yet: run "bash tools/setup.sh" in WSL first.');
+    if (!fs.existsSync(HELPER)) throw new Error(HELPER_MISSING);
     s.hooks = s.hooks || {};
     const add = (event, hook) => (s.hooks[event] = s.hooks[event] || []).push({ hooks: [{ type: 'command', ...hook }] });
     for (const event of CLAUDE_EVENTS) add(event, { command: `${RUN_HELPER} hook claude`, timeout: 5 });
@@ -162,17 +176,23 @@ function setTunnel(alias, on) {
 
 // ---------- what the settings page uses ----------
 async function status() {
-  const r = await wsl(linuxScript(['status']));
+  // without WSL, wsl.exe is never started (it would offer to install WSL)
+  const info = await wslInfo();
   let inWsl = null;
-  try { inWsl = r.code === 0 ? parseResult(r, 'WSL') : null; } catch {}
+  if (info.installed) {
+    const r = await wsl(linuxScript(['status']));
+    try { inWsl = r.code === 0 ? parseResult(r, 'WSL') : null; } catch {}
+  }
   let windows = false;
   try { windows = windowsConnected(); } catch {}
-  return { windows, wsl: inWsl, ssh: sshHosts().map(h => ({ alias: h.alias })), helper: fs.existsSync(HELPER) };
+  const helper = fs.existsSync(HELPER);
+  return { windows, wslInstalled: info.installed, distro: info.default, wsl: inWsl, ssh: sshHosts().map(h => ({ alias: h.alias })), helper, helperMissing: helper ? '' : HELPER_MISSING };
 }
 
 async function connect(target, on, arg, token) {
   if (target === 'windows') windowsConnect(on);
   else if (target === 'wsl-claude' || target === 'wsl-codex') {
+    if (!(await wslInfo()).installed) throw new Error('WSL is not installed on this PC.');
     const agent = target.slice(4);
     const script = on ? linuxInstallScript({ src: 'wsl', token, actions: [`install ${agent}`] }) : linuxScript([`uninstall ${agent}`, 'cli off --if-unused']);
     parseResult(await wsl(script), 'WSL');
@@ -191,4 +211,4 @@ async function connect(target, on, arg, token) {
   return status();
 }
 
-module.exports = { status, connect, sshHosts, takeOverOldTunnelLines, windowsConnect };
+module.exports = { status, connect, sshHosts, takeOverOldTunnelLines, windowsConnect, windowsConnected, repairWindows };

@@ -1,22 +1,49 @@
 'use strict';
 // Quick prompt: runs "claude -p" in one of your projects (in WSL, on Windows, or on an SSH server) and returns
 // its answer. It only gets tools that read, unless you let it edit files; it never runs commands.
-// Also used to translate text you selected (main.js).
+// Also used to translate text you selected (main.js), where Claude Code runs as settings.claudeIn says.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { wslInfo } = require('./win');
 
 const READ_TOOLS = 'Read,Glob,Grep,WebSearch,WebFetch';
 const EDIT_TOOLS = `${READ_TOOLS},Edit,MultiEdit,Write`;
-const WIN_CLAUDE = path.join(os.homedir(), '.local', 'bin', 'claude.exe');
 const shq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+/** Claude Code on Windows: the native installer's claude.exe, npm's claude.cmd, or one on your PATH. */
+function windowsClaude() {
+  const home = os.homedir();
+  const dirs = [path.join(home, '.local', 'bin'), path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
+    ...String(process.env.PATH || '').split(';').filter(Boolean)];
+  for (const dir of dirs) for (const name of ['claude.exe', 'claude.cmd']) {
+    const file = path.join(dir, name);
+    if (fs.existsSync(file)) return file;
+  }
+  return null;
+}
+
+/**
+ * Where translations run: claudeIn from settings ('windows', 'wsl', or a server's alias), or with 'auto' the first
+ * place that has Claude Code (Windows, then WSL). null: nowhere.
+ */
+async function place(claudeIn) {
+  const home = { src: 'win', cwd: os.homedir() };
+  if (claudeIn === 'windows') return home;
+  if (claudeIn === 'wsl') return { src: 'wsl', cwd: '~' };
+  if (claudeIn && claudeIn !== 'auto') return { src: 'ssh', host: claudeIn, cwd: '' };
+  if (windowsClaude()) return home;
+  if ((await wslInfo()).installed) return { src: 'wsl', cwd: '~' };
+  return null;
+}
 // on a server Claude Code may only exist inside the VS Code extension
 const FIND_CLAUDE = 'C=$(command -v claude || ls -d ~/.local/bin/claude ~/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | tail -1); ' +
   '[ -n "$C" ] || { echo "ISLAND: Claude Code is not installed there" >&2; exit 127; }; ';
 
 /** Folders Claude Code knows in WSL (from ~/.claude.json), so the quick prompt also offers projects Island has not seen yet. */
-function wslProjects() {
+async function wslProjects() {
+  if (!(await wslInfo()).installed) return [];
   return new Promise(resolve => {
     let out = '';
     const py = "import json,os\ntry:\n  p=json.load(open(os.path.expanduser('~/.claude.json'))).get('projects',{})\nexcept Exception:\n  p={}\n" +
@@ -55,7 +82,7 @@ function explain(err, code) {
  * Runs claude -p with `prompt` in project `p`. Resolves { ok, text } or { ok: false, error }.
  * quiet: without your hooks, CLAUDE.md and plugins, and not kept in your Claude history (for translations).
  */
-function run(p, prompt, { allowEdits = false, model = '', quiet = false, timeoutMs = 5 * 60 * 1000 } = {}) {
+async function run(p, prompt, { allowEdits = false, model = '', quiet = false, timeoutMs = 5 * 60 * 1000 } = {}) {
   const args = ['-p', '--output-format', 'text', '--allowedTools', allowEdits ? EDIT_TOOLS : READ_TOOLS];
   if (allowEdits) args.push('--permission-mode', 'acceptEdits');
   if (model) args.push('--model', model);
@@ -63,9 +90,22 @@ function run(p, prompt, { allowEdits = false, model = '', quiet = false, timeout
   const line = FIND_CLAUDE + '"$C" ' + args.map(shq).join(' ');
   let cmd, argv;
   const opts = { windowsHide: true };
-  if (p.src === 'wsl') { cmd = 'wsl.exe'; argv = ['--cd', p.cwd || '~', '-e', 'bash', '-lc', line]; }
-  else if (p.src === 'ssh') { cmd = 'ssh'; argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', p.host, `cd ${shq(p.cwd)} && bash -lc ${shq(line)}`]; }
-  else { cmd = fs.existsSync(WIN_CLAUDE) ? WIN_CLAUDE : 'claude'; argv = args; if (p.cwd && fs.existsSync(p.cwd)) opts.cwd = p.cwd; }
+  if (p.src === 'wsl') {
+    if (!(await wslInfo()).installed) return { ok: false, error: 'WSL is not installed on this PC.' };
+    cmd = 'wsl.exe'; argv = ['--cd', p.cwd || '~', '-e', 'bash', '-lc', line];
+  } else if (p.src === 'ssh') {
+    cmd = 'ssh'; argv = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', p.host, `${p.cwd ? `cd ${shq(p.cwd)} && ` : ''}bash -lc ${shq(line)}`];
+  } else {
+    cmd = windowsClaude();
+    if (!cmd) return { ok: false, error: 'Claude Code is not installed on Windows.' };
+    argv = args;
+    if (/\.cmd$/i.test(cmd)) { // npm's claude.cmd only starts through cmd.exe (the arguments here are all plain words)
+      argv = ['/d', '/s', '/c', `"${[cmd, ...args].map(a => `"${a}"`).join(' ')}"`];
+      cmd = process.env.ComSpec || 'cmd.exe';
+      opts.windowsVerbatimArguments = true;
+    }
+    if (p.cwd && fs.existsSync(p.cwd)) opts.cwd = p.cwd;
+  }
   return new Promise(resolve => {
     let out = '', err = '';
     const child = spawn(cmd, argv, opts);
@@ -83,4 +123,4 @@ function run(p, prompt, { allowEdits = false, model = '', quiet = false, timeout
   });
 }
 
-module.exports = { projects, run };
+module.exports = { projects, run, place, windowsClaude };

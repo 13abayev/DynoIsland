@@ -5,7 +5,7 @@
     Microsoft's own dotnet.exe: Smart App Control blocks unsigned .exe files it has never seen, and a
     program built on your own PC is always new. Runs on the .NET 9 runtime or any newer one.
     The Windows target gives it Windows' own APIs: media controls, text recognition (OCR).
-    EnableWindowsTargeting lets it build from WSL.
+    EnableWindowsTargeting lets it build on Linux too (GitHub's runners).
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

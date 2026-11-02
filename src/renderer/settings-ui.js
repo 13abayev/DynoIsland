@@ -20,11 +20,13 @@ function settingsPage() {
   if (connError) h += `<div class="error">${esc(connError)}</div>`;
   if (!c) h += '<div class="hint">Checking what is connected…</div>';
   else {
-    if (!c.helper) h += '<div class="error">The Windows helper is not built yet. In WSL, run: bash tools/setup.sh</div>';
-    const wslDown = !c.wsl;
-    h += option('wsl-claude', 'Claude Code in WSL', wslDown ? 'WSL did not answer' : 'Your Ubuntu projects, in a terminal or VS Code', c.wsl?.claude, { off: wslDown });
-    h += option('wsl-codex', 'Codex in WSL', wslDown ? '' : 'Same events as Claude Code; new for Island, so check it once', c.wsl?.codex, { off: wslDown });
+    if (!c.helper) h += `<div class="error">${esc(c.helperMissing)}</div>`;
     h += option('windows', 'Claude Code on Windows', 'Terminal sessions, and the Code tab of the Claude app', c.windows);
+    if (c.wslInstalled) { // without WSL these rows are left out
+      const wslDown = !c.wsl;
+      h += option('wsl-claude', 'Claude Code in WSL', wslDown ? 'WSL did not answer' : `Your ${c.distro || 'WSL'} projects, in a terminal or VS Code`, c.wsl?.claude, { off: wslDown });
+      h += option('wsl-codex', 'Codex in WSL', wslDown ? '' : 'Same events as Claude Code; new for Island, so check it once', c.wsl?.codex, { off: wslDown });
+    }
     h += '<div class="set-sub">SSH servers</div><div class="hint">Connect adds Island\'s hook on the server, and Island keeps its own SSH ' +
       'connection to it open, so its sessions reach this PC however you work there (VS Code or a terminal).</div>';
     const tunnelText = t => !t ? '' : t.state === 'open' ? 'Tunnel open: its sessions show up here'

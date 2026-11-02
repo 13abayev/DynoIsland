@@ -2,13 +2,14 @@
 // "Take me there": brings back the window or tab a session runs in.
 //   browser chat        → the extension switches to the tab, the helper brings the browser to the front
 //   VS Code (any)       → the VS Code window with that folder; if it is not open, VS Code opens it
-//                         (vscode-remote://wsl+Ubuntu/... or vscode-remote://ssh-remote+server/...)
+//                         (vscode-remote://wsl+<distro>/... or vscode-remote://ssh-remote+server/...)
 //   Windows terminal    → the exact window Claude Code was started from (the hook told us which)
 //   WSL / SSH terminal  → Windows Terminal
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { wslInfo } = require('./win');
 
 const VSCODE = [
   path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Microsoft VS Code', 'Code.exe'),
@@ -32,11 +33,12 @@ async function jump(s, { helper, server }) {
     return;
   }
   if (s.term === 'vscode' && s.project) {
-    const marker = s.src === 'wsl' ? `[WSL: ${s.distro || 'Ubuntu'}]` : s.src === 'ssh' ? `[SSH: ${s.host}]` : '';
+    const distro = s.src === 'wsl' ? s.distro || (await wslInfo()).default || 'Ubuntu' : ''; // the hook says which; else WSL's default
+    const marker = s.src === 'wsl' ? `[WSL: ${distro}]` : s.src === 'ssh' ? `[SSH: ${s.host}]` : '';
     const r = await helper.request({ cmd: 'focusMatch', process: ['Code'], title: [s.project, marker].filter(Boolean) });
     if (r.window) return;
     if (s.cwd) {
-      const uri = s.src === 'wsl' ? `vscode-remote://wsl+${s.distro || 'Ubuntu'}${s.cwd}` : s.src === 'ssh' ? `vscode-remote://ssh-remote+${s.host}${s.cwd}` : null;
+      const uri = s.src === 'wsl' ? `vscode-remote://wsl+${distro}${s.cwd}` : s.src === 'ssh' ? `vscode-remote://ssh-remote+${s.host}${s.cwd}` : null;
       if (openInVsCode(uri ? ['--folder-uri', uri] : [s.cwd])) return;
     }
   }

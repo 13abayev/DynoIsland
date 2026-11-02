@@ -9,6 +9,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const config = require('./config');
+const paths = require('./paths');
+const { reg } = require('./win');
 const { Hub } = require('./sessions');
 const { startServer, PORT } = require('./server');
 const { Helper } = require('./helper');
@@ -26,7 +28,6 @@ const connect = require('./connect');
 const quick = require('./quick');
 const clip = require('./clip-io');
 
-const ROOT = path.join(__dirname, '..', '..');
 const APP_ID = 'local.island';
 // Island's own id for its notifications (Island.lnk carries it; without a fixed one Electron makes up a new one
 // every start)
@@ -76,7 +77,7 @@ function start() {
   hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
   jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
   server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug } });
-  helper = new Helper(path.join(ROOT, 'bin', 'helper', 'IslandHelper.dll'));
+  helper = new Helper(paths.HELPER_DLL);
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
   system = new System({ helper, settings: config.settings });
@@ -106,11 +107,12 @@ function start() {
     toastSimple(`${b.name}: battery low`, `${b.level}% left. Time to charge it.`);
   });
   startTunnels();
-  islands = new Islands({ root: ROOT, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
+  islands = new Islands({ renderer: paths.RENDERER, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
   registerHotkeys();
   watchAway();
   ensureStartMenuShortcut();
   checkStartWithWindows();
+  try { if (connect.repairWindows({ takeOver: paths.INSTALLED })) console.log('Island: the Claude Code hooks on Windows now run this Island'); } catch (e) { logError(e); }
   wireIpc(token);
 }
 
@@ -323,9 +325,11 @@ async function translateSelection() {
   const set = config.settings();
   openIsland(false);
   islands.send('translation', { status: 'working', source: text });
-  const prompt = `Translate the text below into ${set.translateTo}. If it is already in ${set.translateTo}, translate it into ${set.translateAlt} instead. ` +
-    `Reply with only the translation, nothing else.\n\n${text}`;
-  const r = await quick.run({ src: 'wsl', cwd: '~' }, prompt, { model: 'haiku', quiet: true, timeoutMs: 90 * 1000 });
+  const alt = set.translateAlt.trim() ? ` If it is already in ${set.translateTo}, translate it into ${set.translateAlt} instead.` : '';
+  const prompt = `Translate the text below into ${set.translateTo}.${alt} Reply with only the translation, nothing else.\n\n${text}`;
+  const runIn = await quick.place(set.claudeIn);
+  const r = runIn ? await quick.run(runIn, prompt, { model: 'haiku', quiet: true, timeoutMs: 90 * 1000 })
+    : { ok: false, error: 'Translating needs Claude Code: install it on Windows, or choose where it runs in settings → Tools.' };
   islands.send('translation', r.ok ? { status: 'done', source: text, text: r.text } : { status: 'error', source: text, error: r.error });
 }
 
@@ -463,15 +467,14 @@ async function connectStatus() {
   return status;
 }
 
-const reg = (...args) => new Promise(resolve => execFile('reg.exe', args, { windowsHide: true }, (err, out) => resolve(err ? '' : String(out))));
-
 function ensureStartMenuShortcut() {
   // a Start menu entry with Island's app id: Windows shows its notifications properly, and you can start it from there
   const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   hideElectronShortcut();
   reg('add', `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`, '/v', 'DisplayName', '/d', 'Island', '/f'); // the name on its notifications
   const link = path.join(programs, 'Island.lnk');
-  const want = { target: process.execPath, args: `"${ROOT}"`, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID, description: 'Island: your AI sessions in one place' };
+  const { exe, args } = paths.launch();
+  const want = { target: exe, args: args.map(a => `"${a}"`).join(' '), appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID, description: 'Island: your AI sessions in one place' };
   let have = null;
   try { have = shell.readShortcutLink(link); } catch {}
   // (re)written when it is missing, or older (no notification id), or Island's folder moved
@@ -493,7 +496,8 @@ function hideElectronShortcut() {
 const STARTUP_APPROVED = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
 
 function setStartWithWindows(on) {
-  app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: [ROOT] });
+  const { exe, args } = paths.launch();
+  app.setLoginItemSettings({ openAtLogin: on, path: exe, args });
   if (on) reg('add', STARTUP_APPROVED, '/v', APP_ID, '/t', 'REG_BINARY', '/d', '02' + '0'.repeat(22), '/f'); // allowed, as Task Manager's Enable does
 }
 
@@ -621,7 +625,7 @@ function wireIpc(token) {
   handle('focus:start', min => timers.focusStart(Math.max(1, Number(min) || 25)));
   handle('focus:stop', () => timers.focusStop());
   handle('copy-token', async () => { await clip.writeText(token); return true; });
-  handle('open-extension-folder', () => shell.openPath(path.join(ROOT, 'extension')));
+  handle('open-extension-folder', () => shell.openPath(paths.EXTENSION_DIR));
   ipcMain.on('menu', e => {
     const w = islands.fromSender(e.sender);
     Menu.buildFromTemplate([

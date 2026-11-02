@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { wslInfo } = require('./win');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const EVERY = 5 * 60 * 1000;
@@ -24,7 +25,8 @@ function windowsLogin() {
   try { return parseLogin(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8')); } catch { return null; }
 }
 
-function wslLogin() {
+async function wslLogin() {
+  if (!(await wslInfo()).installed) return null;
   return new Promise(resolve => {
     let out = '';
     const child = spawn('wsl.exe', ['-e', 'sh', '-c', 'cat "$HOME/.claude/.credentials.json" 2>/dev/null'], { windowsHide: true });

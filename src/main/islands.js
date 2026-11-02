@@ -23,9 +23,9 @@ function describe(d, main) {
 }
 
 class Islands {
-  /** @param {{ root: string, chosen: () => string[], onReady: () => void, onLog: (msg: string) => void }} options */
-  constructor({ root, chosen, onReady, onLog }) {
-    this.root = root;
+  /** @param {{ renderer: string, chosen: () => string[], onReady: () => void, onLog: (msg: string) => void }} options */
+  constructor({ renderer, chosen, onReady, onLog }) {
+    this.renderer = renderer;
     this.chosen = chosen;
     this.onReady = onReady;
     this.onLog = onLog;
@@ -74,7 +74,7 @@ class Islands {
     w.number = n;
     w.setAlwaysOnTop(true, 'screen-saver');
     w.setIgnoreMouseEvents(true, { forward: true });
-    w.loadFile(path.join(this.root, 'src', 'renderer', 'index.html'));
+    w.loadFile(path.join(this.renderer, 'index.html'));
     w.once('ready-to-show', () => {
       w.showInactive();
       // displays with a different scaling: set the size again once the window lives on its own display

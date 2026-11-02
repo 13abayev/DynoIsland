@@ -26,7 +26,8 @@ const DEFAULTS = {
   lowBattery: 20, // a red alert when a Bluetooth device (AirPods too) gets this low, in %; 0 = off
   serverDirs: {}, // the folder on each server that files you drop on it go to (alias → folder)
   translateTo: 'English', // Ctrl+Alt+T translates into this language…
-  translateAlt: 'Azerbaijani', // …or into this one when the text is already in the first
+  translateAlt: '', // …or into this one when the text is already in the first (empty: none)
+  claudeIn: 'auto', // where translations run Claude Code: 'auto' (Windows, else WSL), 'windows', 'wsl' or a server's alias
   displays: [], // the displays (ids) that show an island; none chosen = the main display (islands.js)
   sshServers: [], // servers you connected: Island keeps a tunnel open to each (set by Connect, not by hand)
 };

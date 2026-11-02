@@ -4,11 +4,8 @@
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 const readline = require('readline');
-
-// Microsoft's dotnet.exe runs the helper: Smart App Control would block a self-built .exe
-const DOTNET = [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'dotnet', 'dotnet.exe')].find(p => fs.existsSync(p)) || 'dotnet';
+const { DOTNET, HELPER_MISSING } = require('./paths');
 
 class Helper extends EventEmitter {
   constructor(dll) {
@@ -21,7 +18,7 @@ class Helper extends EventEmitter {
   }
 
   start() {
-    if (!fs.existsSync(this.dll)) { console.error('Island: helper not built, run tools/setup.sh'); return; }
+    if (!fs.existsSync(this.dll)) { console.error('Island:', HELPER_MISSING); return; }
     const child = (this.child = spawn(DOTNET, [this.dll, 'serve'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }));
     child.on('error', e => console.error('Island: could not start the helper:', e.message));
     readline.createInterface({ input: child.stdout }).on('line', line => {
@@ -57,4 +54,4 @@ class Helper extends EventEmitter {
   }
 }
 
-module.exports = { Helper, DOTNET };
+module.exports = { Helper };
