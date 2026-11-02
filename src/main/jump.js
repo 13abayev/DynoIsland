@@ -49,4 +49,4 @@ async function jump(s, { helper, server }) {
   await helper.request({ cmd: 'focusMatch', process: ['WindowsTerminal'], title: [] });
 }
 
-module.exports = { jump };
+module.exports = { jump, openInVsCode };

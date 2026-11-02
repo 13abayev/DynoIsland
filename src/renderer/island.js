@@ -259,6 +259,7 @@ api.onNudge(n => {
 });
 
 api.onToggle(({ open: force, view: page } = {}) => {
+  if (page && open && view === page && ui.pages[page]?.toggles) { setOpen(false); return; } // its hotkey again closes it
   if (page) { setOpen(true, true, page); return; }
   if (force || !open || !pinned) setOpen(true, true);
   else setOpen(false);

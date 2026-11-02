@@ -85,6 +85,8 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, onPair =
     } else if (url.pathname === '/debug/identify') {
       debug.identify(); // the same as "Identify displays" in settings (for testing)
       json(res, 200, { ok: true });
+    } else if (url.pathname === '/debug/launcher') {
+      json(res, 200, await debug.launcher(data)); // what Spotlight finds for { q }, or opens { open: id, how } (for testing)
     } else if (url.pathname === '/debug/click') {
       json(res, 200, { clicked: await debug.click(String(data.selector || '')) }); // clicks a button in the open island (for testing)
     } else if (url.pathname === '/debug/open') {

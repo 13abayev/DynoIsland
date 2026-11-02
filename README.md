@@ -44,6 +44,7 @@ settings. What is playing and your next meeting show above the tabs. Settings ha
 
 | Keys | What it does |
 |---|---|
+| <kbd>Alt</kbd>+<kbd>Space</kbd> | Spotlight: apps, files, projects, terminals, sums (you can choose another key) |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> | Open / close the island (then arrow keys and Enter) |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd> | Go to the session that has waited longest; again for the next |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd> | Quick prompt: ask Claude Code in one of your projects |
@@ -67,6 +68,26 @@ in the island, or ticking it off.
 - **Reply**: the ↩ button on a finished session lets you type your next message to it from the island.
 - **Reminders**: a notification when a session finishes or needs you, then again after 5 minutes and every
   15 minutes (3 times at most). While you are away from the PC, or focusing, they wait, and you get one summary.
+
+### Spotlight
+
+<kbd>Alt</kbd>+<kbd>Space</kbd> opens the island as a search bar. Type, and the best match comes first:
+
+- **Apps**: everything in your Start menu.
+- **Projects**: the ones your sessions worked in, on Windows, in WSL and on your servers. Enter opens one in VS Code.
+- **Files and folders**: from Windows Search's index (your user folders), plus folders Windows does not index,
+  which Island reads itself (only names, kept on this PC). By default that is your `Projects` folder and the like;
+  settings → Tools → Spotlight lists them, with **Add folder…**.
+- **Terminals**: *Terminal* (PowerShell), your WSL distro, and `ssh <server>` for each server in your SSH config.
+- **Sums and conversions**: `12*7`, `(3+4)^2`, `sqrt 2`, `15% of 80`, `5 km in mi`, `30 c in f`, `2 gb in mb`.
+  Enter copies the result.
+- **Island itself**: Clipboard, Shelf, Notes, Focus, Settings, and `timer 10`.
+- **`> a command`** runs it in a new terminal. With nothing that fits, *Ask Claude* hands your text to the quick
+  prompt, and *Search the web* opens your browser.
+
+Enter opens, <kbd>Shift</kbd>+<kbd>Enter</kbd> opens a terminal there (a file's folder, a project, also in WSL or on
+a server), <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder, and Esc closes. Terminals open in Windows Terminal
+when you have it. What you open often comes first.
 
 ### Ask (quick prompt)
 
@@ -258,7 +279,7 @@ npm start       # Island from this folder (the first start adds it to the Start 
   release (`.github/workflows/release.yml`). Bump `version` in `package.json` first.
 - Restart Island after changing anything in `src/`.
 - `src/renderer/index.html?demo` (served by any static server) shows the island with sample data; add
-  `&view=clipboard` (or `prompt`, `notes`, `focus`, `settings`, `setup`) to open a page, and `&fresh` for a new PC.
+  `&view=clipboard` (or `prompt`, `notes`, `focus`, `settings`, `setup`, `launch`) to open a page, and `&fresh` for a new PC.
 - `ISLAND_NO_WSL=1` makes Island act as on a PC without WSL; `ISLAND_DATA=<folder>` gives it an empty data folder
   (to try setup as a new user).
 - Errors that would otherwise stop Island go to `%APPDATA%\Island\island.log`.
@@ -285,6 +306,7 @@ src/main/server.js    127.0.0.1:47900, only with your token: hooks post (and wai
 src/main/connect.js   Connect / Update / Disconnect (Windows, WSL, SSH)
 src/main/tunnels.js   Island's own SSH tunnel to each connected server
 src/main/quick.js     claude -p in a project (quick prompt, translate)
+src/main/launcher.js  Spotlight: apps, projects, files (Windows Search + your folders), terminals; calc.js: sums
 src/main/clips.js     clipboard history; clip-io.js: Electron 45's asynchronous clipboard
 src/main/timers.js    timers and the focus timer
 src/main/system.js    Bluetooth batteries (AirPods too), the low battery alert, meetings
@@ -297,7 +319,7 @@ src/renderer/         the island: core.js + island.js, and one *-ui.js per part 
                       clipboard, shelf, phone, notes, focus, media, volume bar, batteries, meeting, translate, mascot,
                       settings, setup)
 tools/                setup.ps1, build-helper.ps1, package.ps1 (the zip), make-icon.js
-helper/               C# helper: windows, keys, clipboard changes and copied files, media controls, sound,
+helper/               C# helper: windows, keys, clipboard changes and copied files, media controls, sound, file search,
                       brightness, AirPods battery, mic, OCR, Outlook, and the Windows hook / reply / status line
 hooks/linux/          hook, reply, status line, the island command (island.py) and settings merge for WSL and
                       SSH servers

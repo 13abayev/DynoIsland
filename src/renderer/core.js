@@ -5,7 +5,8 @@
 //   ui.pages   id → { label, tab, order, render(), click(e), change(e), keydown(e), opened(arg) }
 //              a page of the open island; pages with a label and tab: true get a tab. A page can also have
 //              bare: true (no cards above it), title (in the bar), tabs() → html (its own tab strip) and
-//              sticky: true (stays open when you click another app).
+//              sticky: true (stays open when you click another app) and toggles: true (opening it again by its
+//              hotkey closes it).
 //              "page:arg" (data-go="settings:phone") opens a page with opened(arg)
 //   ui.cards   () → html, shown above the pages of the open island (now playing, next meeting, …); one marked
 //              urgent (f.urgent = true) shows above bare pages (settings, setup) too
@@ -201,6 +202,26 @@ function demoApi() {
       };
     },
     install: async () => ({ ok: false, error: 'Demo mode' }),
+    launcherQuick: async q => {
+      const s = q.trim().toLowerCase();
+      if (!s) return [{ id: 'r1', kind: 'app', name: 'Visual Studio Code', desc: 'App' }, { id: 'r2', kind: 'project', name: 'web-shop', desc: 'WSL · /home/you/projects/web-shop' }, { id: 'r3', kind: 'terminal', name: 'ssh gpu-server', desc: 'A terminal on that server' }];
+      const sum = /^(-?\d+(?:\.\d+)?)\s*([-+*/])\s*(-?\d+(?:\.\d+)?)$/.exec(s); // the real one has a full calculator (calc.js)
+      const out = sum ? [{ id: 'c', kind: 'calc', name: String({ '+': (a, b) => a + b, '-': (a, b) => a - b, '*': (a, b) => a * b, '/': (a, b) => a / b }[sum[2]](+sum[1], +sum[3])), desc: `${s} · Enter copies it`, score: 200 }] : [];
+      const all = [
+        ...['Visual Studio Code', 'Notepad', 'Spotify', 'Microsoft Teams', 'Windows Terminal', 'Calculator', 'Telegram'].map(n => ({ id: 'app:' + n, kind: 'app', name: n, desc: 'App' })),
+        { id: 'p1', kind: 'project', name: 'web-shop', desc: 'WSL · /home/you/projects/web-shop' }, { id: 'p2', kind: 'project', name: 'ml-research', desc: 'gpu-server · /home/you/research/ml-research' },
+        { id: 't1', kind: 'terminal', name: 'Terminal', desc: 'PowerShell, in your home folder' }, { id: 't2', kind: 'terminal', name: 'Ubuntu (WSL)', desc: 'A terminal in WSL' },
+        { id: 't3', kind: 'terminal', name: 'ssh gpu-server', desc: 'A terminal on that server' }, { id: 'i1', kind: 'island', name: 'Clipboard', desc: 'Your clipboard history', page: 'clipboard' },
+      ];
+      for (const it of all) { const n = it.name.toLowerCase(); const sc = n.startsWith(s) ? 90 : n.split(/\W+/).some(w => w.startsWith(s)) ? 75 : n.includes(s) ? 55 : 0; if (sc) out.push({ ...it, score: sc }); }
+      return [...out, { id: 'ask', kind: 'ask', name: `Ask Claude: ${q.trim()}`, desc: 'In the quick prompt', text: q.trim() }, { id: 'web', kind: 'web', name: `Search the web for “${q.trim()}”`, desc: 'In your browser' }];
+    },
+    launcherFiles: async q => {
+      await new Promise(r => setTimeout(r, 150));
+      const files = [['web-shop', true, '~\\Projects'], ['shop-notes.md', false, '~\\Documents'], ['Shopping list.xlsx', false, '~\\Downloads'], ['eval-results.csv', false, '~\\Projects\\ml-research']];
+      const s = q.trim().toLowerCase();
+      return files.filter(([n]) => n.toLowerCase().includes(s)).map(([name, dir, desc], i) => ({ id: 'f' + i, kind: dir ? 'folder' : 'file', name, desc, score: 60 - i }));
+    },
     refreshLimits: async () => { await new Promise(r => setTimeout(r, 800)); demo.usage = { ...demo.usage, at: Date.now() }; fire('state', demo); },
     displays: async () => demoDisplays,
     setDisplays: async ids => demoDisplays.map(d => Object.assign(d, { shown: ids.includes(d.id) })),

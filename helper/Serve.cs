@@ -210,6 +210,8 @@ static class Serve
             case "meetings":
                 var list = Outlook.Next((int?)req["hours"] ?? 24);
                 return list == null ? new JsonObject { ["ok"] = false, ["error"] = "outlook not running" } : new JsonObject { ["ok"] = true, ["meetings"] = list };
+            case "findFiles":
+                return new JsonObject { ["ok"] = true, ["files"] = Files.Find((string?)req["query"] ?? "", (int?)req["limit"] ?? 30) };
             default:
                 throw new Exception("unknown command");
         }

@@ -29,6 +29,11 @@ const DEFAULTS = {
   translateAlt: '', // …or into this one when the text is already in the first (empty: none)
   claudeIn: 'auto', // where translations run Claude Code: 'auto' (Windows, else WSL), 'windows', 'wsl' or a server's alias
   checkUpdates: true, // look for a newer Island on GitHub once a day (install.js)
+  launcherKey: 'Alt+Space', // opens Spotlight in the island (launcher.js)
+  launcherFiles: true, // Spotlight also finds files and folders
+  searchFolders: [], // folders Spotlight searches itself (Windows Search does not index them): your projects
+  searchFoldersInit: false, // searchFolders was filled once with the usual places for projects
+  webSearch: 'google', // "Search the web for …" in Spotlight: google, bing or duckduckgo
   setupDone: false, // the first-start setup in the island (setup-ui.js) was finished
   setupStep: '', // where setup was left (it goes on there, also after installing restarted Island)
   setupSkipped: [], // setup steps you skipped: their settings tab keeps a dot until they are done (checks.js)

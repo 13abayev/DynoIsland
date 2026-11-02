@@ -30,6 +30,7 @@ const quick = require('./quick');
 const clip = require('./clip-io');
 const install = require('./install');
 const checks = require('./checks');
+const { Launcher } = require('./launcher');
 const { wslInfo } = require('./win');
 
 const APP_ID = 'local.island';
@@ -53,7 +54,13 @@ const HOTKEYS_WHAT = {
   paste: 'Paste as plain text', translate: 'Translate what you selected', mic: 'Mute or unmute your microphone', phone: 'Send what you copied to your phone',
 };
 const hotkeysTaken = new Set();
-const hotkeyList = () => Object.entries(HOTKEYS_WHAT).map(([id, what]) => ({ keys: HOTKEYS[id].replace('Control', 'Ctrl'), what, ok: !hotkeysTaken.has(HOTKEYS[id]) }));
+// Spotlight's hotkey is yours to choose (settings → Tools → Spotlight): one of these
+const LAUNCHER_KEYS = ['Alt+Space', 'Control+Alt+F', 'Control+Shift+Space', 'Control+Alt+O'];
+let launcherKeyOn = '';
+const hotkeyList = () => [
+  { keys: launcherKeyOn.replace('Control', 'Ctrl'), what: 'Spotlight: apps, files, projects, terminals', ok: !!launcherKeyOn && !hotkeysTaken.has(launcherKeyOn) },
+  ...Object.entries(HOTKEYS_WHAT).map(([id, what]) => ({ keys: HOTKEYS[id].replace('Control', 'Ctrl'), what, ok: !hotkeysTaken.has(HOTKEYS[id]) })),
+];
 
 app.setAppUserModelId(APP_ID);
 app.setToastActivatorCLSID(TOAST_CLSID);
@@ -73,7 +80,7 @@ process.on('uncaughtException', logError);
 process.on('unhandledRejection', logError);
 
 let islands = null, hub = null, server = null, helper = null, tunnels = null, limits = null;
-let clips = null, timers = null, system = null, jobs = null, shelf = null, phone = null;
+let clips = null, timers = null, system = null, jobs = null, shelf = null, phone = null, launcher = null;
 let fullscreenOn = null; // the display (id) where a fullscreen app is in front: only that island hides
 let lastApp = 0; // the last window in front that is not Island: where a clipboard item is pasted
 let clipEvents = 0; // clipboard changes the helper reported (for testing: /debug/islands)
@@ -94,7 +101,7 @@ function start() {
   const token = config.token();
   hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
   jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
-  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland } });
+  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland, launcher: launcherDebug } });
   helper = new Helper(paths.HELPER_DLL);
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
@@ -124,6 +131,8 @@ function start() {
     for (const w of islands?.all() || []) w.webContents.send('battery-low', { name: b.name, level: b.level, sound: w === here && !quiet });
     toastSimple(`${b.name}: battery low`, `${b.level}% left. Time to charge it.`);
   });
+  launcher = new Launcher({ helper, hub, settings: config.settings, updateSettings: config.updateSettings, dataDir: config.dataDir(), projects: () => quick.projects(hub) });
+  launcher.warm();
   startTunnels();
   islands = new Islands({ renderer: paths.RENDERER, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
   registerHotkeys();
@@ -194,6 +203,18 @@ async function islandsInfo() {
     ).catch(e => ({ error: e.message })),
   })));
   return { fullscreenOn, clipEvents, clips: clips.items.length, windows, displays: islands?.list() };
+}
+
+/** For testing (/debug/launcher): Spotlight's answers for { q } (with how long they took), or { open: id, how }. */
+async function launcherDebug(d) {
+  if (d.open) return launcher.open(String(d.open), d.how || 'open');
+  const strip = list => list.map(({ icon, ...it }) => ({ ...it, icon: !!icon }));
+  let t = Date.now();
+  const quickList = strip(await launcher.quick(String(d.q || '')));
+  const quickMs = Date.now() - t;
+  t = Date.now();
+  const files = strip(await launcher.files(String(d.q || '')));
+  return { quickMs, filesMs: Date.now() - t, apps: launcher.apps.length, indexed: launcher.index.length, folders: launcher.folders(), quick: quickList, files };
 }
 
 /** For testing (/debug/click): clicks what `selector` finds in the open island, as you would. */
@@ -321,6 +342,18 @@ function registerHotkeys() {
     const r = await helper.request({ cmd: 'micMute', mute: !live.mic.muted });
     if (r.ok) { live.mic = { ...live.mic, muted: r.muted }; sendState(); noteAll(r.muted ? 'Microphone muted' : 'Microphone on', null, 1800); }
   });
+  registerLauncherKey();
+}
+
+/** Spotlight's hotkey (settings: launcherKey), registered again when you choose another one. */
+function registerLauncherKey() {
+  if (launcherKeyOn) { globalShortcut.unregister(launcherKeyOn); hotkeysTaken.delete(launcherKeyOn); }
+  const want = config.settings().launcherKey;
+  launcherKeyOn = LAUNCHER_KEYS.includes(want) ? want : LAUNCHER_KEYS[0];
+  if (!globalShortcut.register(launcherKeyOn, () => openIsland(false, 'launch'))) {
+    hotkeysTaken.add(launcherKeyOn);
+    console.log(`Island: ${launcherKeyOn} is already used by another app`);
+  }
 }
 
 function watchAway() {
@@ -731,6 +764,7 @@ function wireIpc(token) {
     if ('focusHolds' in changes && timers.focusing()) hub.hold(next.focusHolds);
     if ('lowBattery' in changes) system.update();
     if ('checkUpdates' in changes && next.checkUpdates) checkUpdate?.();
+    if ('launcherKey' in changes) registerLauncherKey();
     sendState();
     return next;
   });
@@ -822,6 +856,23 @@ function wireIpc(token) {
   handle('app:uninstall', () => uninstall());
   handle('app:check-update', async () => { await checkUpdate?.(); sendState(); return update; });
   handle('app:open-data', () => shell.openPath(config.dataDir()));
+  // Spotlight
+  handle('launcher:quick', q => launcher.quick(String(q ?? '')));
+  handle('launcher:files', q => launcher.files(String(q ?? '')));
+  handle('launcher:open', (id, how) => launcher.open(String(id), ['open', 'terminal', 'folder'].includes(how) ? how : 'open'));
+  handle('launcher:opened', () => launcher.refreshProjects());
+  ipcMain.handle('launcher:add-folder', async e => {
+    const r = await dialog.showOpenDialog(islands.fromSender(e.sender), { title: 'A folder for Spotlight to search', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return;
+    config.updateSettings({ searchFolders: [...new Set([...launcher.folders(), r.filePaths[0]])], searchFoldersInit: true });
+    launcher.readFolders().catch(logError);
+    sendState();
+  });
+  handle('launcher:remove-folder', dir => {
+    config.updateSettings({ searchFolders: launcher.folders().filter(d => d !== dir), searchFoldersInit: true });
+    launcher.readFolders().catch(logError);
+    sendState();
+  });
   // setup
   handle('setup:detect', async () => { refreshChecks?.(); return detect(); });
   handle('setup:ext-pairing', on => { extPairingUntil = on ? Date.now() + 15 * 60 * 1000 : 0; if (on && pairWaiters.length) answerPair(true); });

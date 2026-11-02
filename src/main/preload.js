@@ -83,6 +83,13 @@ contextBridge.exposeInMainWorld('islandApi', {
   uninstall: () => ipcRenderer.invoke('app:uninstall'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
   openDataFolder: () => ipcRenderer.invoke('app:open-data'),
+  // Spotlight
+  launcherQuick: q => ipcRenderer.invoke('launcher:quick', q),
+  launcherFiles: q => ipcRenderer.invoke('launcher:files', q),
+  launcherOpen: (id, how) => ipcRenderer.invoke('launcher:open', id, how),
+  launcherOpened: () => ipcRenderer.invoke('launcher:opened'),
+  addSearchFolder: () => ipcRenderer.invoke('launcher:add-folder'),
+  removeSearchFolder: dir => ipcRenderer.invoke('launcher:remove-folder', dir),
   // setup
   detect: () => ipcRenderer.invoke('setup:detect'),
   extPairing: on => ipcRenderer.invoke('setup:ext-pairing', !!on),
