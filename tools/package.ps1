@@ -39,14 +39,22 @@ if ($NoBuild) {
   & (Join-Path $PSScriptRoot 'build-helper.ps1') -Out "$app\bin\helper"
 }
 
-Write-Host '.NET runtime (from Microsoft, kept in dist\cache)'
+# straight from Microsoft's release list, checked against the SHA-512 it publishes (dotnet-install.ps1 goes through
+# aka.ms links, which did not always answer)
+$meta = Invoke-RestMethod 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json'
+$runtime = $meta.'latest-runtime'
+Write-Host ".NET runtime $runtime (from Microsoft, kept in dist\cache)"
+$file = ($meta.releases | Where-Object { $_.runtime.version -eq $runtime } | Select-Object -First 1).runtime.files |
+  Where-Object { $_.name -eq 'dotnet-runtime-win-x64.zip' }
+if (-not $file) { throw "Microsoft's release list has no Windows runtime for .NET $runtime." }
 $cache = Join-Path $dist 'cache'
 New-Item -ItemType Directory -Force $cache | Out-Null
-$installer = Join-Path $cache 'dotnet-install.ps1'
-if (-not (Test-Path $installer)) { Invoke-WebRequest 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer -UseBasicParsing }
-& $installer -Runtime dotnet -Channel 9.0 -InstallDir (Join-Path $cache 'dotnet') -NoPath
-if ($LASTEXITCODE) { throw 'Getting the .NET runtime failed.' }
-Copy-Item (Join-Path $cache 'dotnet') $stage -Recurse
+$runtimeZip = Join-Path $cache "dotnet-runtime-$runtime-win-x64.zip"
+if (-not (Test-Path $runtimeZip) -or (Get-FileHash $runtimeZip -Algorithm SHA512).Hash -ne $file.hash) {
+  Invoke-WebRequest $file.url -OutFile $runtimeZip -UseBasicParsing
+  if ((Get-FileHash $runtimeZip -Algorithm SHA512).Hash -ne $file.hash) { Remove-Item $runtimeZip; throw 'The .NET runtime download does not match the checksum Microsoft publishes.' }
+}
+Expand-Archive $runtimeZip -DestinationPath (Join-Path $stage 'dotnet')
 
 Write-Host "Zipping $zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
