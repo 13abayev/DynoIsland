@@ -27,6 +27,7 @@ const { jump } = require('./jump');
 const connect = require('./connect');
 const quick = require('./quick');
 const clip = require('./clip-io');
+const install = require('./install');
 
 const APP_ID = 'local.island';
 // Island's own id for its notifications (Island.lnk carries it; without a fixed one Electron makes up a new one
@@ -69,8 +70,14 @@ let clipPrivate = false; // what is on the clipboard now was copied by a passwor
 const live = { media: null, volume: null, mic: null }; // what the helper reports about media and sound
 const toasts = new Set(); // keep notifications alive until they are closed, or their click is lost
 
+let update = null, checkUpdate = null; // a newer Island on GitHub: { version, url }; checkUpdate() looks now
+
 if (!app.requestSingleInstanceLock()) app.exit(0);
-else app.whenReady().then(start);
+else {
+  // started again: open the island; started by Settings → Apps → Uninstall: uninstall
+  app.on('second-instance', (_e, argv) => (argv.includes('--uninstall') ? uninstall() : islands && openIsland()));
+  app.whenReady().then(() => (process.argv.includes('--uninstall') ? uninstall().then(gone => gone || app.quit()) : start()));
+}
 
 function start() {
   const token = config.token();
@@ -110,9 +117,14 @@ function start() {
   islands = new Islands({ renderer: paths.RENDERER, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
   registerHotkeys();
   watchAway();
-  ensureStartMenuShortcut();
-  checkStartWithWindows();
-  try { if (connect.repairWindows({ takeOver: paths.INSTALLED })) console.log('Island: the Claude Code hooks on Windows now run this Island'); } catch (e) { logError(e); }
+  // started from the zip: setup installs Island first, so nothing in Windows points at this copy yet
+  if (!install.canInstall()) {
+    ensureStartMenuShortcut();
+    checkStartWithWindows();
+    try { if (connect.repairWindows({ takeOver: paths.INSTALLED })) console.log('Island: the Claude Code hooks on Windows now run this Island'); } catch (e) { logError(e); }
+    if (install.isInstalled()) install.keepRegistered().catch(logError);
+  }
+  checkUpdate = watchUpdates();
   wireIpc(token);
 }
 
@@ -184,6 +196,7 @@ function sendState() {
       settings: config.settings(),
       limitsStatus: limits?.status || 'off',
       hotkeys: HOTKEYS_SHOWN,
+      app: appInfo(),
     };
     for (const w of islands.all()) w.webContents.send('state', { ...state, fullscreen: w.displayId === fullscreenOn });
   }, 60);
@@ -467,18 +480,82 @@ async function connectStatus() {
   return status;
 }
 
+// ---------- installing, uninstalling, updates ----------
+let installedThere = null; // the version already in the install folder (when this one runs from the zip)
+
+/** What setup and settings show about Island itself. */
+function appInfo() {
+  const canInstall = install.canInstall();
+  if (canInstall && installedThere === null) installedThere = install.installedVersion();
+  return { version: app.getVersion(), installed: install.isInstalled(), canInstall, installedVersion: canInstall ? installedThere : '', update };
+}
+
+/** Looks for a newer Island on GitHub soon after start, then once a day (settings: checkUpdates). */
+function watchUpdates() {
+  const check = async () => {
+    if (!config.settings().checkUpdates) return null;
+    const found = await install.newerRelease();
+    if (found && found.version !== update?.version) { update = found; sendState(); }
+    return found;
+  };
+  setTimeout(check, 30 * 1000);
+  setInterval(check, 24 * 60 * 60 * 1000);
+  return check;
+}
+
+let uninstalling = false;
+/**
+ * Uninstall (Settings → Apps → Island, or settings → General). Asks first; then removes Island's hooks everywhere,
+ * its startup entry, shortcuts and registry keys, and with installed Island its folder. Resolves false when you said no.
+ */
+async function uninstall() {
+  if (uninstalling) return false;
+  uninstalling = true;
+  const installed = install.isInstalled();
+  const r = await dialog.showMessageBox({
+    type: 'question', title: 'Uninstall Island', message: 'Uninstall Island?', noLink: true,
+    detail: 'Island removes its hooks from Claude Code and Codex (on this PC, in WSL and on your servers), stops starting with Windows and ' +
+      (installed ? 'removes itself from this PC.' : 'leaves the Start menu. This project folder stays as it is.'),
+    checkboxLabel: 'Also delete my Island data (settings, notes, clipboard history)',
+    buttons: ['Uninstall', 'Cancel'], defaultId: 1, cancelId: 1,
+  });
+  if (r.response !== 0) { uninstalling = false; return false; }
+  const quietly = p => Promise.race([Promise.resolve(p).catch(() => null), wait(30 * 1000)]); // a server that does not answer
+  try { if (connect.windowsConnected()) connect.windowsConnect(false); } catch (e) { logError(e); }
+  const st = await quietly(connect.status());
+  for (const agent of ['claude', 'codex']) if (st?.wsl?.[agent]) await quietly(connect.connect(`wsl-${agent}`, false));
+  tunnels?.set([]);
+  for (const alias of config.settings().sshServers) await quietly(connect.connect('ssh', false, alias));
+  setStartWithWindows(false);
+  config.updateSettings({ startWithWindows: false, sshServers: [] });
+  await reg('delete', STARTUP_APPROVED, '/v', APP_ID, '/f');
+  const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  for (const name of ['Island.lnk', 'Electron.lnk']) {
+    const file = path.join(programs, name);
+    try { if (shell.readShortcutLink(file).appUserModelId === APP_ID) fs.rmSync(file, { force: true }); } catch {}
+  }
+  await reg('delete', `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`, '/f');
+  await install.unregister({ removeData: r.checkboxChecked, dataDir: config.dataDir() });
+  app.quit();
+  return true;
+}
+
 function ensureStartMenuShortcut() {
   // a Start menu entry with Island's app id: Windows shows its notifications properly, and you can start it from there
   const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const icon = path.join(paths.APP_DIR, 'assets', 'island.ico');
   hideElectronShortcut();
-  reg('add', `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`, '/v', 'DisplayName', '/d', 'Island', '/f'); // the name on its notifications
+  // the name and icon on its notifications
+  const aumid = `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`;
+  reg('add', aumid, '/v', 'DisplayName', '/d', 'Island', '/f');
+  reg('add', aumid, '/v', 'IconUri', '/d', path.join(paths.APP_DIR, 'assets', 'island.png'), '/f');
   const link = path.join(programs, 'Island.lnk');
   const { exe, args } = paths.launch();
-  const want = { target: exe, args: args.map(a => `"${a}"`).join(' '), appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID, description: 'Island: your AI sessions in one place' };
+  const want = { target: exe, args: args.map(a => `"${a}"`).join(' '), icon, iconIndex: 0, appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID, description: 'Island: your AI sessions in one place' };
   let have = null;
   try { have = shell.readShortcutLink(link); } catch {}
-  // (re)written when it is missing, or older (no notification id), or Island's folder moved
-  if (!have || have.target !== want.target || have.args !== want.args || (have.toastActivatorClsid || '').toUpperCase() !== TOAST_CLSID) shell.writeShortcutLink(link, want);
+  // (re)written when it is missing, or older (no notification id, no icon), or Island's folder moved
+  if (!have || have.target !== want.target || have.args !== want.args || have.icon !== icon || (have.toastActivatorClsid || '').toUpperCase() !== TOAST_CLSID) shell.writeShortcutLink(link, want);
 }
 
 /**
@@ -543,6 +620,7 @@ function wireIpc(token) {
     if ('visualizer' in changes || 'showMedia' in changes) updateMeter();
     if ('focusHolds' in changes && timers.focusing()) hub.hold(next.focusHolds);
     if ('lowBattery' in changes) system.update();
+    if ('checkUpdates' in changes && next.checkUpdates) checkUpdate?.();
     sendState();
     return next;
   });
@@ -626,6 +704,11 @@ function wireIpc(token) {
   handle('focus:stop', () => timers.focusStop());
   handle('copy-token', async () => { await clip.writeText(token); return true; });
   handle('open-extension-folder', () => shell.openPath(paths.EXTENSION_DIR));
+  // Island itself: installing it (from the zip), uninstalling it, updates
+  handle('app:install', async () => { try { await install.install(); return { ok: true }; } catch (e) { logError(e); return { ok: false, error: e.message }; } });
+  handle('app:uninstall', () => uninstall());
+  handle('app:check-update', async () => { await checkUpdate?.(); sendState(); return update; });
+  handle('app:open-data', () => shell.openPath(config.dataDir()));
   ipcMain.on('menu', e => {
     const w = islands.fromSender(e.sender);
     Menu.buildFromTemplate([

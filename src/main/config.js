@@ -28,6 +28,7 @@ const DEFAULTS = {
   translateTo: 'English', // Ctrl+Alt+T translates into this language…
   translateAlt: '', // …or into this one when the text is already in the first (empty: none)
   claudeIn: 'auto', // where translations run Claude Code: 'auto' (Windows, else WSL), 'windows', 'wsl' or a server's alias
+  checkUpdates: true, // look for a newer Island on GitHub once a day (install.js)
   displays: [], // the displays (ids) that show an island; none chosen = the main display (islands.js)
   sshServers: [], // servers you connected: Island keeps a tunnel open to each (set by Connect, not by hand)
 };

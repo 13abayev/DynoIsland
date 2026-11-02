@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Island's icon: the island (a black pill with a session's green dot) on a dark tile. tools/make-icon.js makes the .png and .ico -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3f4e"/>
+      <stop offset="1" stop-color="#15161b"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="55.5" fill="none" stroke="#ffffff" stroke-opacity="0.12"/>
+  <rect x="30" y="92" width="196" height="72" rx="36" fill="#000000"/>
+  <circle cx="68" cy="128" r="17" fill="#30d158"/>
+  <rect x="100" y="120" width="94" height="16" rx="8" fill="#f5f5f7" fill-opacity="0.92"/>
+</svg>

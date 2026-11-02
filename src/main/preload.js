@@ -78,4 +78,9 @@ contextBridge.exposeInMainWorld('islandApi', {
   onTranslation: on('translation'),
   copyToken: () => ipcRenderer.invoke('copy-token'),
   openExtensionFolder: () => ipcRenderer.invoke('open-extension-folder'),
+  // Island itself: installing it (from the zip), uninstalling it, updates
+  install: () => ipcRenderer.invoke('app:install'),
+  uninstall: () => ipcRenderer.invoke('app:uninstall'),
+  checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+  openDataFolder: () => ipcRenderer.invoke('app:open-data'),
 });

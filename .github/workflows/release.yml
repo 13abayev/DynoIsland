@@ -1,0 +1,30 @@
+# A tag like v0.3.0 builds the zip your colleagues install Island from (tools/package.ps1) and attaches it to that
+# GitHub release:  git tag v0.3.0 && git push origin v0.3.0
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  zip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - run: npm ci --no-audit --no-fund
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package.ps1
+      - name: Attach the zip to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE) { gh release create $tag --title "Island $($tag.TrimStart('v'))" --generate-notes }
+          gh release upload $tag (Get-ChildItem dist/*.zip).FullName --clobber

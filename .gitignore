@@ -4,3 +4,4 @@ helper/bin/
 helper/obj/
 .claude/
 __pycache__/
+dist/
