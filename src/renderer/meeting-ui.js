@@ -48,6 +48,9 @@ ui.pages.meeting = {
   },
 };
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Meetings</div>' +
-  settingCheck('meetings', 'Next meeting', 'Reads your calendar from classic Outlook while it runs (Island never starts Outlook). The New Outlook cannot be read this way') +
-  (state.meetingsStatus && state.meetingsStatus !== 'ok' ? `<div class="hint">Right now: ${esc(state.meetingsStatus)}.</div>` : '') + '</div>');
+ui.settings.push({ tab: 'alerts', order: 40, render: () => {
+  const s = state.meetingsStatus;
+  const pill = !state.settings?.meetings || !s || s === 'off' ? '' : s === 'ok' ? statusPill('ok', 'Reading Outlook') : statusPill('off', s);
+  return settingSection('Meetings', settingRow('Next meeting', 'From classic Outlook while it runs (Island never starts it). The new Outlook cannot be read this way',
+    pill + `<input type="checkbox" class="switch" data-set="meetings"${state.settings?.meetings ? ' checked' : ''}>`));
+} });

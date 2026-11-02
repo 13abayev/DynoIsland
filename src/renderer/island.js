@@ -20,10 +20,11 @@ function render() {
   island.classList.toggle('hidden', !!(state.fullscreen && !groups().needs.length && !open));
   renderBar(top, right);
   if (open) {
-    cardsEl.innerHTML = view === 'settings' ? '' : ui.cards.map(f => f()).join('');
-    const tabs = Object.entries(ui.pages).filter(([, p]) => p.tab).sort((a, b) => a[1].order - b[1].order);
-    tabsEl.innerHTML = view === 'settings' ? '' : tabs.map(([id, p]) => `<button class="tab${id === view ? ' on' : ''}" data-go="${id}">${esc(p.label)}</button>`).join('');
     const page = ui.pages[view] || ui.pages.sessions;
+    cardsEl.innerHTML = page.bare ? '' : ui.cards.map(f => f()).join('');
+    const tabs = Object.entries(ui.pages).filter(([, p]) => p.tab).sort((a, b) => a[1].order - b[1].order);
+    tabsEl.innerHTML = page.tabs ? page.tabs() : page.bare ? ''
+      : tabs.map(([id, p]) => `<button class="tab${id === view ? ' on' : ''}" data-go="${id}">${esc(p.label)}</button>`).join('');
     paintBody(page.render() + (page.tab ? foot() : ''));
   }
   fitHeight();
@@ -37,7 +38,7 @@ function barItem() {
 }
 
 function renderBar(top, right) {
-  let lead = '<span class="dot idle"></span>', text = open ? 'Island' : '', cls = 'quiet', chips = '';
+  let lead = '<span class="dot idle"></span>', text = open ? esc(ui.pages[view]?.title || 'Island') : '', cls = 'quiet', chips = '';
   if (note) text = esc(note);
   else if (top) ({ lead, text, cls = '', chips = '' } = top);
   if (ui.lead && !(top?.keepLead && !note)) lead = ui.lead(state.away ? 'sleep' : top?.mood || 'idle', lead);
@@ -47,10 +48,17 @@ function renderBar(top, right) {
   bar.innerHTML = `${lead}<span class="text ${cls}">${text}</span>${chips}${right}`;
 }
 
-/** Redraws the page, keeping what you were typing (and where) in fields marked data-draft. */
+/**
+ * Redraws the page, keeping what you were typing (and where) in fields marked data-draft, and in the settings field
+ * you are typing in (data-set: saved when you leave it, so a redraw before that must not lose it).
+ */
 function paintBody(html) {
-  const active = document.activeElement, key = active?.dataset?.draft;
-  const [from, to] = [active?.selectionStart, active?.selectionEnd];
+  const active = document.activeElement;
+  const typing = active?.dataset?.set && active.matches('input:not([type=checkbox]), textarea') ? 'set:' + active.dataset.set : '';
+  const key = active?.dataset?.draft || typing;
+  if (typing) ui.drafts[typing] = active.value;
+  let from = null, to = null;
+  try { [from, to] = [active?.selectionStart, active?.selectionEnd]; } catch {} // number fields have no selection
   body.innerHTML = html;
   for (const el of body.querySelectorAll('[data-draft]')) {
     const v = ui.drafts[el.dataset.draft];
@@ -58,8 +66,12 @@ function paintBody(html) {
     else if (v != null) el.value = v;
   }
   if (key) {
-    const el = body.querySelector(`[data-draft="${CSS.escape(key)}"]`);
-    if (el) { el.focus(); try { el.setSelectionRange(from, to); } catch {} }
+    const el = body.querySelector(typing ? `[data-set="${CSS.escape(typing.slice(4))}"]` : `[data-draft="${CSS.escape(key)}"]`);
+    if (el) {
+      if (typing) el.value = ui.drafts[typing];
+      el.focus();
+      try { el.setSelectionRange(from, to); } catch {}
+    }
   }
 }
 
@@ -77,25 +89,28 @@ function fitHeight() {
 }
 
 // ---------- opening and closing ----------
-function setOpen(on, pin = false, page = null) {
-  const was = view;
+function setOpen(on, pin = false, target = null) {
+  const was = view, [page, arg] = String(target || '').split(':');
   open = on;
   pinned = on && (pin || pinned);
   if (page && ui.pages[page]) view = page;
   if (!on) { view = ui.pages[lastTab] ? lastTab : 'sessions'; selected = -1; }
   if (on && ui.pages[view]?.tab) lastTab = view;
   render();
-  if (on && (view !== was || page) && ui.pages[view]?.opened) ui.pages[view].opened();
+  if (on && (view !== was || page) && ui.pages[view]?.opened) ui.pages[view].opened(arg);
 }
 
-function go(page) {
+/** Opens a page ("settings", or "settings:phone" for a page with something to open on it). */
+function go(target) {
+  const [page, arg] = String(target).split(':');
   if (!ui.pages[page]) return;
   view = page;
   pinned = true;
   if (ui.pages[page].tab) lastTab = page;
   selected = -1;
+  body.scrollTop = 0;
   render();
-  ui.pages[page].opened?.();
+  ui.pages[page].opened?.(arg);
 }
 
 showNote = (text, ms = 2200) => {
@@ -146,7 +161,7 @@ island.addEventListener('click', async e => {
   // a click inside the open island keeps it open and lets you type
   if (open && !pinned) { pinned = true; api.focusWindow(); }
   for (const part of [ui.pages[view], ...Object.values(ui.pages).filter(p => p !== ui.pages[view])]) {
-    if (part?.click && t.closest('#cards, #body') && (await part.click(e))) return;
+    if (part?.click && t.closest('#cards, #tabs, #body') && (await part.click(e))) return;
   }
 });
 
@@ -169,7 +184,14 @@ island.addEventListener('change', async e => {
   if (key) ui.drafts[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
   const set = e.target.dataset?.set;
   if (set) {
-    const v = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? Math.max(0, Number(e.target.value) || 0) : e.target.value;
+    const t = e.target;
+    delete ui.drafts['set:' + set];
+    let v = t.type === 'checkbox' ? t.checked : t.value;
+    if (t.type === 'number') {
+      if (!t.value.trim() || !Number.isFinite(Number(t.value))) { t.value = state.settings?.[set] ?? ''; return; } // emptied: keeps the saved number
+      v = Math.min(Number(t.max || Infinity), Math.max(Number(t.min || 0), Math.round(Number(t.value))));
+      t.value = v;
+    }
     api.setSettings({ [set]: v });
     return;
   }

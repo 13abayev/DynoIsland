@@ -27,7 +27,16 @@ ui.pages.translate = {
 
 api.onTranslation(t => { translation = t; render(); });
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Translate</div>' +
-  `<div class="opt"><div class="what"><div>Translate into</div></div><input class="field small-wide" data-set="translateTo" value="${esc(state.settings?.translateTo || 'English')}"></div>` +
-  `<div class="opt"><div class="what"><div>Text already in that language goes into</div></div><input class="field small-wide" data-set="translateAlt" placeholder="none" value="${esc(state.settings?.translateAlt || '')}"></div>` +
-  '<div class="hint">Select text anywhere and press Ctrl+Alt+T. Claude Code (Haiku) translates it; nothing is kept in your Claude history.</div></div>');
+/** Where Claude Code runs for translations: on Windows, in WSL (when it is installed) or on a connected server. */
+function claudeInOptions() {
+  const opts = [['auto', 'Wherever it is installed'], ['windows', 'On Windows']];
+  if (conn?.wslInstalled || state.settings?.claudeIn === 'wsl') opts.push(['wsl', 'In WSL']);
+  for (const alias of state.settings?.sshServers || []) opts.push([alias, `On ${alias}`]);
+  return opts;
+}
+
+ui.settings.push({ tab: 'tools', order: 20, render: () => settingSection('Translate',
+  settingText('translateTo', 'Translate into', 'English') +
+  settingText('translateAlt', 'Text already in that language goes into', 'none') +
+  settingSelect('claudeIn', 'Claude Code runs', claudeInOptions()) +
+  '<div class="hint">Select text anywhere and press Ctrl+Alt+T. Claude Code (Haiku) translates it; nothing is kept in your Claude history.</div>') });

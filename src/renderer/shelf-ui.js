@@ -19,7 +19,7 @@ function sendLine(x) {
 
 function serverForm(x) {
   if (sendOpen !== x.id) return '';
-  if (!servers().length) return '<div class="answer"><div class="hint">Connect a server first (settings → SSH servers).</div></div>';
+  if (!servers().length) return '<div class="answer"><div class="hint">Connect a server first (settings → Sessions → Servers).</div></div>';
   const alias = ui.drafts['shelf:server'] && servers().includes(ui.drafts['shelf:server']) ? ui.drafts['shelf:server'] : servers()[0];
   return `<div class="answer"><div class="answer-row"><select class="field small-wide" data-draft="shelf:server">` +
     servers().map(a => `<option${a === alias ? ' selected' : ''}>${esc(a)}</option>`).join('') + '</select>' +

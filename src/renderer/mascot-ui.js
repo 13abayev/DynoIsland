@@ -15,5 +15,5 @@ const ROBO = `<svg viewBox="0 0 24 24" class="robo-face">
 
 ui.lead = (mood, fallback) => (state.settings?.mascot === false ? fallback : `<span class="robo ${mood}">${ROBO}${mood === 'sleep' ? '<i class="zz">z</i>' : ''}</span>`);
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Look</div>' +
-  settingCheck('mascot', 'Robo the mascot', 'A small face at the left of the island that blinks, looks around while agents work, smiles when one is done and dozes while you are away') + '</div>');
+ui.settings.push({ tab: 'general', order: 30, render: () => settingSection('Look',
+  settingCheck('mascot', 'Robo the mascot', 'A small face at the left of the island that blinks, looks around while agents work, smiles when one is done and dozes while you are away')) });

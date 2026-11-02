@@ -146,7 +146,7 @@ api.onLevel(v => { level = v; });
   requestAnimationFrame(dance);
 })();
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Media and system</div>' +
+ui.settings.push({ tab: 'devices', order: 10, render: () => settingSection('Now playing',
   settingCheck('showMedia', 'Show what is playing', 'The song in the closed island while it plays, tinted with the cover\'s color') +
   settingCheck('visualizer', 'Visualizer', 'Small bars that follow how loud your speakers play') +
-  '<div class="hint">Ctrl+Alt+M mutes and unmutes your microphone. A red dot shows while an app uses it.</div></div>');
+  '<div class="hint">Ctrl+Alt+M mutes and unmutes your microphone. A red dot shows while an app uses it.</div>') });

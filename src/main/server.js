@@ -85,6 +85,9 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, debug })
     } else if (url.pathname === '/debug/identify') {
       debug.identify(); // the same as "Identify displays" in settings (for testing)
       json(res, 200, { ok: true });
+    } else if (url.pathname === '/debug/open') {
+      debug.open(String(data.view || '')); // opens the island on a page, like "settings:sessions" (for testing)
+      json(res, 200, { ok: true });
     } else json(res, 404, {});
   });
 

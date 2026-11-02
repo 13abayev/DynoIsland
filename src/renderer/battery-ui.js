@@ -45,8 +45,6 @@ ui.right.push(() => {
   return `<span class="bat-right" title="${esc(low.name)}: ${low.level}% left">${batteryIcon(low.level)}${open ? '' : `<span>${low.level}%</span>`}</span>`;
 });
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Batteries</div>' +
-  settingNumber('lowBattery', 'Low battery alert at (%)', 0, 100) +
-  '<div class="hint">When a Bluetooth device gets this low, the island turns red for a moment, keeps a red battery at its right and you get a notification; ' +
-  'again only after you charged it. 0 turns it off. AirPods say their battery to Island directly while they are connected: an earbud in its case, ' +
-  'or the case with its lid closed, does not say it.</div></div>');
+ui.settings.push({ tab: 'devices', order: 30, render: () => settingSection('Batteries',
+  settingNumber('lowBattery', 'Low battery alert at', 0, 100, '%', 'A Bluetooth device this low turns the island red and sends a notification, once until you charge it. 0 turns it off') +
+  '<div class="hint">AirPods tell Island their battery while they are connected; an earbud in its case, or the case with its lid closed, does not.</div>') });

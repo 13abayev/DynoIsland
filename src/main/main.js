@@ -44,6 +44,13 @@ const HOTKEYS = {
   phone: 'Control+Alt+P', // send what you copied to your phone
 };
 const HOTKEYS_SHOWN = { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' };
+// all of them, for settings → General (with the ones another app had taken first)
+const HOTKEYS_WHAT = {
+  toggle: 'Open or close the island', next: 'The session that waited longest', prompt: 'Quick prompt', notes: 'Notes and to-dos',
+  paste: 'Paste as plain text', translate: 'Translate what you selected', mic: 'Mute or unmute your microphone', phone: 'Send what you copied to your phone',
+};
+const hotkeysTaken = new Set();
+const hotkeyList = () => Object.entries(HOTKEYS_WHAT).map(([id, what]) => ({ keys: HOTKEYS[id].replace('Control', 'Ctrl'), what, ok: !hotkeysTaken.has(HOTKEYS[id]) }));
 
 app.setAppUserModelId(APP_ID);
 app.setToastActivatorCLSID(TOAST_CLSID);
@@ -83,7 +90,7 @@ function start() {
   const token = config.token();
   hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
   jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
-  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug } });
+  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null) } });
   helper = new Helper(paths.HELPER_DLL);
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
@@ -174,7 +181,8 @@ async function islandsInfo() {
          sessions: state.sessions.length, media: state.media && { title: state.media.title, playing: state.media.playing, app: state.media.app, cover: !!state.media.cover },
          volume: state.volume, mic: state.mic, batteries: state.batteries, meetings: (state.meetings || []).length, meetingsStatus: state.meetingsStatus,
          timers: (state.timers || []).length, focus: state.focus, pages: Object.keys(ui.pages),
-         jobs: (state.jobs || []).map(j => [j.name, j.state, j.percent, j.last].join(' | ')), phone: state.phone, hud })`,
+         jobs: (state.jobs || []).map(j => [j.name, j.state, j.percent, j.last].join(' | ')), phone: state.phone, hud,
+         open, view, tabs: document.getElementById('tabs').innerText.split('\\n').join(' | '), body: open ? document.getElementById('body').innerText.slice(0, 3000) : '' })`,
     ).catch(e => ({ error: e.message })),
   })));
   return { fullscreenOn, clipEvents, clips: clips.items.length, windows, displays: islands?.list() };
@@ -196,6 +204,7 @@ function sendState() {
       settings: config.settings(),
       limitsStatus: limits?.status || 'off',
       hotkeys: HOTKEYS_SHOWN,
+      hotkeyList: hotkeyList(),
       app: appInfo(),
     };
     for (const w of islands.all()) w.webContents.send('state', { ...state, fullscreen: w.displayId === fullscreenOn });
@@ -274,7 +283,11 @@ function openLink(url) {
 }
 
 function registerHotkeys() {
-  const register = (keys, fn) => { if (!globalShortcut.register(keys, fn)) console.log(`Island: ${keys} is already used by another app`); };
+  const register = (keys, fn) => {
+    if (globalShortcut.register(keys, fn)) return;
+    hotkeysTaken.add(keys);
+    console.log(`Island: ${keys} is already used by another app`);
+  };
   register(HOTKEYS.toggle, () => openIsland(true));
   register(HOTKEYS.prompt, () => openIsland(false, 'prompt'));
   register(HOTKEYS.notes, () => openIsland(false, 'notes'));

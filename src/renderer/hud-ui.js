@@ -31,6 +31,5 @@ ui.bar.push(() => {
   };
 });
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Volume and brightness</div>' +
-  settingCheck('hud', 'Show volume and brightness in the island', 'When you change them, the closed island shows a bar for a moment') +
-  '<div class="hint">Windows still shows its own popup too.</div></div>');
+ui.settings.push({ tab: 'devices', order: 20, render: () => settingSection('Volume and brightness',
+  settingCheck('hud', 'Show them in the island', 'When you change them, the closed island shows a bar for a moment (Windows still shows its own too)')) });

@@ -88,7 +88,7 @@ function clipItem(x, pinned) {
 
 function clipboardPage() {
   if (!state.settings?.clipboardHistory) {
-    return '<div class="empty"><b>Clipboard history is off.</b><br>Turn it on in <span class="link" data-go="settings">settings</span>.</div>';
+    return '<div class="empty"><b>Clipboard history is off.</b><br>Turn it on in <span class="link" data-go="settings:tools">settings</span>.</div>';
   }
   const q = String(ui.drafts['clip:search'] || '').toLowerCase().trim();
   const match = x => !q || (x.kind === 'text' ? x.text.toLowerCase().includes(q) : 'image picture'.includes(q));
@@ -154,8 +154,8 @@ ui.pages.clipboard = {
   },
 };
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Clipboard</div>' +
-  settingCheck('clipboardHistory', 'Clipboard history', 'Keeps the last 200 texts and 30 images you copied, on this PC only. Copies a password manager marks as private are never kept') +
-  '<div class="hint">Ctrl+Alt+V pastes what you copied as plain text, without its formatting.</div></div>');
+ui.settings.push({ tab: 'tools', order: 10, render: () => settingSection('Clipboard',
+  settingCheck('clipboardHistory', 'Clipboard history', 'The last 200 texts and 30 images you copied, on this PC only. Private copies (from a password manager) are never kept') +
+  '<div class="hint">Ctrl+Alt+V pastes what you copied as plain text, without its formatting.</div>') });
 
 api.onClips(c => { clips = c; if (open && view === 'clipboard') render(); });

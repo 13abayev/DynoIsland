@@ -4,14 +4,12 @@
 
 let phoneBusy = false, phoneError = '';
 
-function phoneSettings() {
+/** Setting up the phone: the same steps in settings → Phone and in setup (setup-ui.js). */
+function phoneSetup() {
   const p = state.phone || {};
-  let h = '<div class="set"><div class="set-title">Phone</div>';
-  if (phoneError) h += `<div class="error">${esc(phoneError)}</div>`;
+  let h = phoneError ? `<div class="error">${esc(phoneError)}</div>` : '';
   if (!p.configured) {
-    h += '<div class="hint">Send text from your phone and it is on this PC\'s clipboard; photos and files land on the shelf. ' +
-      'Ctrl+Alt+P sends what you copied here (text, a picture or files) to your phone. It goes through a Telegram bot of your own:</div>' +
-      '<ol class="steps"><li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and pick any name. It answers with a token.</li>' +
+    h += '<ol class="steps"><li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and pick any name. It answers with a token.</li>' +
       '<li>Paste the token here:</li></ol>' +
       `<div class="answer-row"><input class="field" type="password" data-draft="phone:token" placeholder="123456789:AAH…" autocomplete="off">` +
       `<button class="btn primary" data-phone="connect"${phoneBusy ? ' disabled' : ''}>${phoneBusy ? 'Checking…' : 'Connect'}</button></div>` +
@@ -20,20 +18,30 @@ function phoneSettings() {
     h += `<div class="hint">Your bot <b>@${esc(p.bot)}</b> is ready. Now tell it which chat is yours: open it in Telegram and press <b>Start</b>, ` +
       `or send it this code: <b class="code">${esc(p.code)}</b></div>` +
       '<div class="btns"><button class="btn primary" data-phone="pair">Open in Telegram</button><button class="btn" data-phone="disconnect">Cancel</button></div>' +
-      '<div class="hint">Pairing from Telegram on this PC works too: it is the same chat on your iPhone.</div>';
+      '<div class="hint">Pairing from Telegram on this PC works too: it is the same chat on your phone.</div>';
   } else {
-    h += `<div class="opt"><div class="what"><div>@${esc(p.bot)}</div><div>Paired with ${esc(p.name || 'your chat')}</div></div>` +
-      `<span class="on">On</span><button class="btn" data-phone="disconnect">Disconnect</button></div>` +
-      '<div class="hint"><b>From your iPhone:</b> paste into the bot\'s chat, or from any app: Share → Telegram → your bot (pin its chat to keep it on top). ' +
-      `<b>One tap:</b> in Shortcuts, make one with <i>Get Clipboard</i> → <i>URL Encode</i> → <i>Open URL</i> <span class="code">https://t.me/${esc(p.bot)}?text=</span> followed by the encoded text; ` +
-      'it opens the bot\'s chat with what you copied typed in, and you tap Send. Put it on your Home Screen, or on Back Tap (Settings → Accessibility → Touch).</div>' +
-      '<div class="hint"><b>To your phone:</b> Ctrl+Alt+P sends what you copied here; on the shelf, the phone button sends a file. Text arrives in a block that copies with one tap.</div>';
+    h += settingRow(`@${esc(p.bot)}`, `Paired with ${esc(p.name || 'your chat')}`, statusPill('ok', 'Connected') + '<button class="btn" data-phone="disconnect">Disconnect</button>');
   }
   if (p.error) h += `<div class="error">${esc(p.error)}</div>`;
-  return h + '</div>';
+  return h;
 }
 
-ui.settings.push(phoneSettings);
+function phoneSettings() {
+  const p = state.phone || {};
+  let h = settingSection('Your phone', '<div class="hint">Text you send your own Telegram bot lands on this PC\'s clipboard, photos and files on the shelf. ' +
+    'Ctrl+Alt+P sends what you copied here to your phone.</div>' + phoneSetup());
+  if (p.paired) {
+    h += settingSection('How to use it',
+      '<div class="hint"><b>From your phone:</b> paste into the bot\'s chat, or from any app: Share → Telegram → your bot (pin its chat to keep it on top).</div>' +
+      '<div class="hint"><b>To your phone:</b> Ctrl+Alt+P sends what you copied; on the shelf, the phone button sends a file. Text arrives in a block that copies with one tap.</div>' +
+      '<details class="more"><summary>One tap from an iPhone</summary><div class="hint">In Shortcuts, make one with <i>Get Clipboard</i> → <i>URL Encode</i> → ' +
+      `<i>Open URL</i> <span class="code">https://t.me/${esc(p.bot)}?text=</span> followed by the encoded text. It opens the bot's chat with what you copied ` +
+      'typed in, and you tap Send. Put it on your Home Screen, or on Back Tap (Settings → Accessibility → Touch).</div></details>');
+  }
+  return h;
+}
+
+ui.settings.push({ tab: 'phone', order: 10, render: phoneSettings });
 
 ui.pages.phone = {
   tab: false, render: () => '', // the phone's settings: these are their clicks

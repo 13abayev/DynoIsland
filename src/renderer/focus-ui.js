@@ -66,6 +66,6 @@ ui.bar.push(() => {
   return null;
 });
 
-ui.settings.push(() => '<div class="set"><div class="set-title">Focus</div>' +
-  settingCheck('focusHolds', 'Hold reminders while I focus', 'Sessions still show in the island, but notifications and sounds wait for the end of your focus time') +
-  '<div class="hint">Windows has no way for apps to switch on its own Do Not Disturb, so Island holds its own reminders instead.</div></div>');
+ui.settings.push({ tab: 'alerts', order: 30, render: () => settingSection('Focus',
+  settingCheck('focusHolds', 'Hold reminders while I focus', 'Sessions still show in the island, but notifications and sounds wait for the end of your focus time. ' +
+    '(Apps cannot switch on Windows\' own Do Not Disturb.)')) });

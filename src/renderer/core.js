@@ -2,14 +2,17 @@
 // Shared by all parts of the island page: the bridge to Island's main process, small helpers and icons, and
 // the lists the parts register themselves in. Load order (index.html): core.js, the parts (*-ui.js), island.js.
 //
-//   ui.pages   id → { label, tab, order, render(), click(e), change(e), keydown(e), opened() }
-//              a page of the open island; pages with a label and tab: true get a tab
+//   ui.pages   id → { label, tab, order, render(), click(e), change(e), keydown(e), opened(arg) }
+//              a page of the open island; pages with a label and tab: true get a tab. A page can also have
+//              bare: true (no cards above it), title (in the bar) and tabs() → html (its own tab strip).
+//              "page:arg" (data-go="settings:phone") opens a page with opened(arg)
 //   ui.cards   () → html, shown above the pages of the open island (now playing, next meeting, …)
 //   ui.sections () → html, extra sections at the top of the Sessions page (your jobs, …)
 //   ui.bar     () → { priority, lead, text, chips, cls, mood, keepLead } what the closed island can show; the
 //              highest priority wins (keepLead: its own lead stays, instead of the mascot)
 //   ui.right   () → html, small things at the right of the bar (limits rings, the mic dot, …)
-//   ui.settings () → html, extra sections of the settings page (from the parts that have settings)
+//   ui.settings { tab, order, render() → html } sections of the settings page, on one of its tabs (general,
+//              sessions, alerts, phone, tools, devices; settings-ui.js), sorted by order
 //   ui.barClick (e) → handled?  clicks on buttons in the bar (the mic dot, …)
 //   ui.input   (e) → handled?  input events (a volume slider, …)
 //   ui.lead    (mood) → html, replaces the dot at the left of the bar (the mascot); mood comes from the bar item
@@ -23,12 +26,27 @@ const $ = id => document.getElementById(id);
 
 const ui = { pages: {}, cards: [], sections: [], bar: [], right: [], settings: [], barClick: [], input: [], lead: null, drafts: {} };
 
-/** A settings row with a checkbox for one of Island's settings. */
+// ---------- settings rows (settings-ui.js and the parts' own sections) ----------
+/** A settings section: a title, then its rows. */
+const settingSection = (title, html) => `<div class="set"><div class="set-title">${esc(title)}</div>${html}</div>`;
+/** One row: what it is (and a line about it) on the left, its control on the right. */
+const settingRow = (label, desc, control) =>
+  `<div class="opt"><div class="what"><div>${label}</div>${desc ? `<div>${desc}</div>` : ''}</div>${control}</div>`;
+/** A row with a switch for one of Island's settings. */
 const settingCheck = (key, label, desc) =>
-  `<div class="opt"><div class="what"><div>${label}</div>${desc ? `<div>${desc}</div>` : ''}</div><input type="checkbox" data-set="${key}"${state.settings?.[key] ? ' checked' : ''}></div>`;
-/** A settings row with a number field. */
-const settingNumber = (key, label, min, max) =>
-  `<div class="opt"><div class="what"><div>${label}</div></div><input type="number" min="${min}" max="${max}" data-set="${key}" value="${esc(state.settings?.[key])}"></div>`;
+  settingRow(label, desc, `<input type="checkbox" class="switch" data-set="${key}"${state.settings?.[key] ? ' checked' : ''}>`);
+/** A row with a number field (and its unit after it). */
+const settingNumber = (key, label, min, max, unit = '', desc = '') =>
+  settingRow(label, desc, `<span class="num"><input type="number" min="${min}" max="${max}" data-set="${key}" value="${esc(state.settings?.[key])}">${unit ? `<span>${unit}</span>` : ''}</span>`);
+/** A row with a choice from a list: options [[value, text], …]. */
+const settingSelect = (key, label, options, desc = '') =>
+  settingRow(label, desc, `<select data-set="${key}">${options.map(([v, t]) =>
+    `<option value="${esc(v)}"${String(state.settings?.[key]) === String(v) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`);
+/** A row with a text field. */
+const settingText = (key, label, placeholder = '', desc = '') =>
+  settingRow(label, desc, `<input class="field small-wide" data-set="${key}" placeholder="${esc(placeholder)}" value="${esc(state.settings?.[key] ?? '')}">`);
+/** A small colored status. kind: ok, off, action (something for you to do), error or busy. */
+const statusPill = (kind, text) => `<span class="pill ${kind}">${esc(text)}</span>`;
 let state = { sessions: [], usage: null, ext: false, settings: {}, fullscreen: false, hotkeys: {} };
 
 // ---------- small helpers ----------
@@ -111,8 +129,15 @@ function demoApi() {
       remindAfterMin: 5, repeatEveryMin: 15, maxReminders: 3, sound: 'stuck', toasts: true, hideInFullscreen: true, startWithWindows: false,
       limitsFromLogin: true, answerFromIsland: true, clipboardHistory: true, showMedia: true, visualizer: true, meetings: true,
       focusHolds: true, mascot: true, hud: true, lowBattery: 20, translateTo: 'English', translateAlt: 'Azerbaijani',
+      awayAfterMin: 3, claudeIn: 'auto', checkUpdates: true,
     },
     hotkeys: { toggle: 'Ctrl+Alt+Space', next: 'Ctrl+Alt+J', prompt: 'Ctrl+Alt+K' },
+    hotkeyList: [['Ctrl+Alt+Space', 'Open or close the island'], ['Ctrl+Alt+J', 'The session that waited longest'], ['Ctrl+Alt+K', 'Quick prompt'],
+      ['Ctrl+Alt+N', 'Notes and to-dos'], ['Ctrl+Alt+V', 'Paste as plain text'], ['Ctrl+Alt+T', 'Translate what you selected'],
+      ['Ctrl+Alt+M', 'Mute or unmute your microphone'], ['Ctrl+Alt+P', 'Send what you copied to your phone']].map(([keys, what], i) => ({ keys, what, ok: i !== 4 })),
+    app: { version: '0.2.0', installed: true, canInstall: false, installedVersion: '', update: null },
+    limitsStatus: 'ok',
+    meetingsStatus: 'ok',
     media: { has: true, title: 'Lost in the Fire', artist: 'Gesaffelstein', app: 'Spotify', playing: true, position: 42, duration: 202, positionAt: now, canNext: true, canPrev: true, cover: '' },
     volume: { level: 0.54, muted: false },
     mic: { muted: false, apps: ['Teams'] },
@@ -147,7 +172,7 @@ function demoApi() {
     { id: '2', n: 2, name: 'External monitor', size: '1920×1080', where: 'right of the main one', shown: false },
   ];
   const known = {
-    connectStatus: async () => ({ windows: false, wsl: { claude: true, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: true, tunnel: { state: 'open' } }, { alias: 'gpu-box', connected: false, tunnel: null }] }),
+    connectStatus: async () => ({ windows: false, wslInstalled: true, distro: 'Ubuntu', wsl: { claude: true, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: true, tunnel: { state: 'open' } }, { alias: 'gpu-box', connected: false, tunnel: null }] }),
     connect: async () => ({ ok: false, error: 'Demo mode', status: null }),
     setSettings: async p => p,
     refreshLimits: async () => { await new Promise(r => setTimeout(r, 800)); demo.usage = { ...demo.usage, at: Date.now() }; fire('state', demo); },
