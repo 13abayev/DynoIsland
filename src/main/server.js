@@ -101,9 +101,9 @@ function startServer({ hub, jobs, token, settings, agentHook, onExtMessage, onEx
     } else if (url.pathname === '/debug/launcher') {
       json(res, 200, await debug.launcher(data)); // what Spotlight finds for { q }, or opens { open: id, how } (for testing)
     } else if (url.pathname === '/debug/click') {
-      json(res, 200, { clicked: await debug.click(String(data.selector || '')) }); // clicks a button in the open island (for testing)
+      json(res, 200, { clicked: await debug.click(String(data.selector || ''), data.value) }); // clicks (or sets) something in the open island (for testing)
     } else if (url.pathname === '/debug/open') {
-      debug.open(String(data.view || '')); // opens the island on a page, like "settings:sessions" (for testing)
+      debug.open(String(data.view || '')); // opens the island on a page, like "settings:sessions", or "toggle": as its hotkey does (for testing)
       json(res, 200, { ok: true });
     } else json(res, 404, {});
   });

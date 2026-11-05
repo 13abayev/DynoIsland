@@ -114,7 +114,7 @@ function start() {
     hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension,
     agentHook: agent => extensions.agentExt(agent)?.brings.hook || null,
     onExtMessage: m => { for (const e of extensions.active()) e.brings.channel?.message?.(m); },
-    debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland, launcher: launcherDebug, connections: () => connectStatus() },
+    debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => (view === 'toggle' ? openIsland(true) : openIsland(false, view || null)), click: clickInIsland, launcher: launcherDebug, connections: () => connectStatus() },
   });
   helper = new Helper(paths.HELPER_DLL);
   loadExtensions();
@@ -302,9 +302,10 @@ async function launcherDebug(d) {
   return { quickMs, filesMs: Date.now() - t, apps: launcher.apps.length, indexed: launcher.index.length, folders: launcher.folders(), quick: quickList, files };
 }
 
-/** For testing (/debug/click): clicks what `selector` finds in the open island, as you would. */
-async function clickInIsland(selector) {
-  const js = `(() => { const el = open && document.querySelector(${JSON.stringify(selector)}); if (el) el.click(); return !!el; })()`;
+/** For testing (/debug/click): clicks what `selector` finds in the open island, as you would (or, with a value, picks it). */
+async function clickInIsland(selector, value) {
+  const act = value == null ? 'el.click()' : `(el.value = ${JSON.stringify(String(value))}, el.dispatchEvent(new Event('change', { bubbles: true })))`;
+  const js = `(() => { const el = open && document.querySelector(${JSON.stringify(selector)}); if (el) ${act}; return !!el; })()`;
   const hits = await Promise.all((islands?.all() || []).map(w => w.webContents.executeJavaScript(js).catch(() => false)));
   return hits.some(Boolean);
 }

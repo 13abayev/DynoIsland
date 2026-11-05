@@ -21,6 +21,20 @@ function islandSection() {
     settingCheck('hideInFullscreen', 'Hide during fullscreen', 'Videos, games, presentations. It still shows when a session needs you'));
 }
 
+/** Always there, or hidden until the mouse touches the top of the screen, or until you press the hotkey. */
+function showingSection() {
+  const s = state.settings || {}, mode = s.showIsland || 'always', key = state.hotkeys?.toggle || 'Ctrl+Alt+Space';
+  const times = (list, def) => list.map(ms => [ms, `${ms / 1000} s${ms === def ? ' (default)' : ''}`]);
+  let h = settingSelect('showIsland', 'Show the island', [['always', 'Always'], ['edge', 'When the mouse touches the top of the screen'], ['hotkey', `Only with the hotkey (${key})`]],
+    mode === 'edge' ? 'Hidden until the mouse touches the top edge of the screen above it' : mode === 'hotkey' ? `Hidden until you press ${esc(key)}` : '');
+  if (mode !== 'always') h += settingCheck('showWhenNeeded', 'Still show it when a session needs you', 'It opens for a moment, then hides again');
+  if (mode !== 'hotkey') {
+    h += settingSelect('hoverOpenMs', 'Open after hovering', times([100, 200, 320, 500, 750, 1000, 1500, 2000], 320), 'How long the mouse rests on the island before it opens');
+    h += settingSelect('hoverCloseMs', 'Close after leaving', times([200, 450, 750, 1000, 1500, 2000, 3000], 450), 'Once the mouse has left an island that opened by hovering');
+  }
+  return settingSection('Showing the island', h);
+}
+
 function displaysSection() {
   if (!displays) return settingSection('Displays', '<div class="hint">Looking for your displays…</div>');
   const shown = displays.filter(d => d.shown).length;
@@ -149,6 +163,7 @@ function soundSection() {
 
 ui.settings.push(
   { tab: 'general', order: 10, render: islandSection },
+  { tab: 'general', order: 15, render: showingSection },
   { tab: 'general', order: 20, render: displaysSection },
   { tab: 'general', order: 40, render: hotkeysSection },
   { tab: 'general', order: 50, render: aboutSection },

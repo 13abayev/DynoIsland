@@ -13,6 +13,10 @@ const DEFAULTS = {
   toasts: true, // Windows notifications next to the island
   awayAfterMin: 3, // no mouse or keyboard this long: you are away, reminders wait for you
   hideInFullscreen: true, // videos, games, presentations
+  showIsland: 'always', // 'always', 'edge' (when the mouse touches the top of the screen above it) or 'hotkey' (only then)
+  showWhenNeeded: true, // hidden: it still opens for a moment when a session needs you
+  hoverOpenMs: 320, // the mouse stays on the island this long, and it opens
+  hoverCloseMs: 450, // and this long after the mouse left an island it opened, it closes
   startWithWindows: false,
   limitsFromLogin: true, // ask Anthropic for your limits with your Claude login (limits.js)
   answerFromIsland: true, // answer permission prompts, questions and plans, and reply to finished sessions, in the island

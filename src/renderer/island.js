@@ -1,6 +1,7 @@
 'use strict';
 // The island: a small notch at the top of the screen that opens into pages (your sessions, quick prompt, …).
-// Hover to peek, click (or Ctrl+Alt+Space) to keep it open. The parts (*-ui.js, loaded before this file)
+// Hover to peek, click (or Ctrl+Alt+Space) to keep it open. It can also stay hidden until the mouse touches the top
+// of the screen above it, or until the hotkey (settings → General → Showing the island). The parts (*-ui.js, loaded before this file)
 // register their pages, cards and bar items in `ui` (core.js); this file draws them and handles opening,
 // closing, the keyboard and the mouse.
 const island = $('island'), bar = $('bar'), panel = $('panel'), cardsEl = $('cards'), tabsEl = $('tabs'), body = $('body');
@@ -8,6 +9,18 @@ const island = $('island'), bar = $('bar'), panel = $('panel'), cardsEl = $('car
 let open = false, pinned = false, view = 'sessions', lastTab = 'sessions';
 let hoverTimer = 0, leaveTimer = 0, nudgeTimer = 0, glowTimer = 0, noteTimer = 0;
 let note = '', selected = -1, interactive = false;
+let revealed = false; // "when the mouse touches the top of the screen": it did, above the hidden island
+
+// how the island shows itself (settings → General → Showing the island)
+const showMode = () => state.settings?.showIsland || 'always';
+const delay = (key, fallback) => { const ms = Number(state.settings?.[key]); return ms >= 50 && ms <= 5000 ? ms : fallback; };
+
+/** Not drawn, and not in the mouse's way: hidden by your setting, or behind a fullscreen app. */
+function isHidden() {
+  if (open) return false;
+  if (state.fullscreen && !groups().needs.length) return true;
+  return showMode() !== 'always' && !revealed;
+}
 
 // ---------- drawing ----------
 function render() {
@@ -17,7 +30,7 @@ function render() {
   island.classList.toggle('busy', !open && !!(top || note));
   island.classList.toggle('has-right', !!right);
   island.classList.toggle('glow-ask', groups().needs.length > 0);
-  island.classList.toggle('hidden', !!(state.fullscreen && !groups().needs.length && !open));
+  island.classList.toggle('hidden', isHidden());
   renderBar(top, right);
   if (open) {
     const page = ui.pages[view] || ui.pages.sessions;
@@ -94,7 +107,7 @@ function setOpen(on, pin = false, target = null) {
   open = on;
   pinned = on && (pin || pinned);
   if (page && ui.pages[page]) view = page;
-  if (!on) { view = ui.pages[lastTab] ? lastTab : 'sessions'; selected = -1; }
+  if (!on) { view = ui.pages[lastTab] ? lastTab : 'sessions'; selected = -1; revealed = false; }
   if (on && ui.pages[view]?.tab) lastTab = view;
   render();
   if (on && (view !== was || page) && ui.pages[view]?.opened) ui.pages[view].opened(arg);
@@ -126,14 +139,29 @@ function glow() {
   glowTimer = setTimeout(() => island.classList.remove('glow-done'), 2600);
 }
 
-island.addEventListener('mouseenter', () => {
+/** The mouse rests on the island: it opens after a moment (not when it only shows with the hotkey). */
+function hoverToOpen() {
   clearTimeout(leaveTimer);
-  if (!open) hoverTimer = setTimeout(() => setOpen(true), 320);
-});
-island.addEventListener('mouseleave', () => {
+  if (open || hoverTimer || showMode() === 'hotkey') return; // (a moment already counting goes on as it is)
+  hoverTimer = setTimeout(() => { hoverTimer = 0; setOpen(true); }, delay('hoverOpenMs', 320));
+}
+function stopHover() {
   clearTimeout(hoverTimer);
-  if (open && !pinned) leaveTimer = setTimeout(() => setOpen(false), 450);
+  hoverTimer = 0;
+}
+island.addEventListener('mouseenter', hoverToOpen);
+island.addEventListener('mouseleave', () => {
+  stopHover();
+  if (open && !pinned) leaveTimer = setTimeout(() => setOpen(false), delay('hoverCloseMs', 450));
+  else if (!open && revealed) hideAgain();
 });
+
+/** Revealed from the top of the screen, but the mouse went away before it opened: hidden again. */
+function hideAgain() {
+  stopHover();
+  revealed = false;
+  render();
+}
 
 // clicks on the see-through part of the window must reach the apps below it
 function setInteractive(on) {
@@ -141,8 +169,18 @@ function setInteractive(on) {
   interactive = on;
   api.setInteractive(on);
 }
-document.addEventListener('mousemove', e => setInteractive(!!e.target.closest?.('#island')));
-document.addEventListener('mouseleave', () => setInteractive(false));
+document.addEventListener('mousemove', e => {
+  setInteractive(!!e.target.closest?.('#island'));
+  if (open || showMode() !== 'edge') return;
+  // the hidden island: the mouse touching the top 2 px of the screen above it shows it, and it opens after a moment
+  const r = island.getBoundingClientRect(), above = e.clientX >= r.left && e.clientX <= r.right;
+  if (!revealed && above && e.clientY <= 1) { revealed = true; render(); hoverToOpen(); }
+  else if (revealed && !(above && e.clientY <= r.bottom)) hideAgain();
+});
+document.addEventListener('mouseleave', () => {
+  setInteractive(false);
+  if (!open && revealed) hideAgain();
+});
 
 // ---------- the mouse and the keyboard ----------
 bar.addEventListener('contextmenu', e => { e.preventDefault(); api.menu(); });
@@ -187,6 +225,7 @@ island.addEventListener('change', async e => {
     const t = e.target;
     delete ui.drafts['set:' + set];
     let v = t.type === 'checkbox' ? t.checked : t.value;
+    if (t.tagName === 'SELECT' && typeof state.settings?.[set] === 'number') v = Number(v); // a choice of times
     if (t.type === 'number') {
       if (!t.value.trim() || !Number.isFinite(Number(t.value))) { t.value = state.settings?.[set] ?? ''; return; } // emptied: keeps the saved number
       v = Math.min(Number(t.max || Infinity), Math.max(Number(t.min || 0), Math.round(Number(t.value))));
@@ -251,7 +290,10 @@ api.onNudge(n => {
   if (n.kind === 'note') { showNote(n.text || '', n.ms || 3000); return; }
   flashKeys = new Set(n.keys || []);
   setTimeout(() => { flashKeys.clear(); }, 2400);
-  if (!open && !(state.fullscreen && n.kind !== 'needs_you')) {
+  // hidden by your setting: it opens for a moment only for a session that needs you (if you want that)
+  const needsYou = n.kind === 'needs_you' || groups().needs.some(s => (n.keys || []).includes(s.key));
+  const shows = showMode() === 'always' || (state.settings?.showWhenNeeded !== false && needsYou);
+  if (!open && shows && !(state.fullscreen && n.kind !== 'needs_you')) {
     setOpen(true, false, n.page || 'sessions');
     clearTimeout(nudgeTimer);
     nudgeTimer = setTimeout(() => { if (open && !pinned && !island.matches(':hover')) setOpen(false); }, 6000);

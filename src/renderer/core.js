@@ -158,6 +158,7 @@ function demoApi() {
     ext: true,
     settings: {
       remindAfterMin: 5, repeatEveryMin: 15, maxReminders: 3, sound: 'stuck', toasts: true, hideInFullscreen: true, startWithWindows: false,
+      showIsland: 'always', showWhenNeeded: true, hoverOpenMs: 320, hoverCloseMs: 450,
       limitsFromLogin: true, answerFromIsland: true, clipboardHistory: true, showMedia: true, visualizer: true, meetings: true,
       focusHolds: true, mascot: true, hud: true, lowBattery: 20, translateTo: 'English', translateAlt: 'Azerbaijani',
       awayAfterMin: 3, claudeIn: 'auto', checkUpdates: true,
@@ -236,6 +237,7 @@ function demoApi() {
   ];
   const listeners = {};
   const fire = (k, v) => (listeners[k] || []).forEach(cb => cb(v));
+  window.demoFire = fire; // for trying the island out: demoFire('nudge', { kind: 'needs_you', keys: [...] })
   document.documentElement.style.background = 'linear-gradient(135deg, #34465f, #6d5f86)'; // a stand-in desktop
   document.documentElement.style.height = '100%';
   window.addEventListener('load', () => setTimeout(() => {
