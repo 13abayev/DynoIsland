@@ -169,13 +169,32 @@ function setInteractive(on) {
   interactive = on;
   api.setInteractive(on);
 }
+/**
+ * The hidden island: the mouse on the top 2 px of the screen above it shows it, and it opens after a moment. The
+ * window now takes the mouse, so it hears where the mouse goes next (and hides again if it leaves first).
+ */
+function revealAt(x, y) {
+  if (open || revealed || showMode() !== 'edge') return false;
+  const r = island.getBoundingClientRect();
+  if (y > 1 || x < r.left || x > r.right) return false;
+  revealed = true;
+  render();
+  setInteractive(true);
+  hoverToOpen();
+  return true;
+}
 document.addEventListener('mousemove', e => {
   setInteractive(!!e.target.closest?.('#island'));
-  if (open || showMode() !== 'edge') return;
-  // the hidden island: the mouse touching the top 2 px of the screen above it shows it, and it opens after a moment
-  const r = island.getBoundingClientRect(), above = e.clientX >= r.left && e.clientX <= r.right;
-  if (!revealed && above && e.clientY <= 1) { revealed = true; render(); hoverToOpen(); }
-  else if (revealed && !(above && e.clientY <= r.bottom)) hideAgain();
+  if (open || showMode() !== 'edge' || revealAt(e.clientX, e.clientY)) return;
+  const r = island.getBoundingClientRect();
+  if (revealed && !(e.clientX >= r.left && e.clientX <= r.right && e.clientY <= r.bottom)) hideAgain();
+});
+// pushed against the top edge, the mouse sends the page nothing: Island's main process saw it there (islands.js),
+// and says once more where it went when it left the top row (shown, not opened yet, and the mouse not on it: hidden)
+api.onTopEdge(({ x, y }) => {
+  if (revealAt(x, y) || open || !revealed) return;
+  const r = island.getBoundingClientRect();
+  if (!(x >= r.left && x <= r.right && y >= 0 && y <= r.bottom)) { hideAgain(); setInteractive(false); }
 });
 document.addEventListener('mouseleave', () => {
   setInteractive(false);

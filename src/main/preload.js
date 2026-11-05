@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('islandApi', {
   onNudge: on('nudge'),
   onToggle: on('toggle'),
   onBlur: on('blur'),
+  onTopEdge: on('top-edge'),
   onTunnels: on('tunnels'),
   onIdentify: on('identify'),
   displays: () => ipcRenderer.invoke('displays:list'),

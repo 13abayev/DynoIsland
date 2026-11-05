@@ -88,6 +88,35 @@ class Islands {
     return w;
   }
 
+  /**
+   * "Show the island when the mouse touches the top of the screen": a hidden island lets the mouse through, and the
+   * moves Windows hands on while you push the mouse against the top edge point above the screen, so the island's page
+   * never hears that the mouse got there. Island looks where the mouse is instead (20 times a second, only in that
+   * mode) and tells the island where it is ({ x, y } in the window) while it is on the top row above it, and once
+   * more when it left that row.
+   */
+  watchTopEdge(on) {
+    clearInterval(this.edgeTimer);
+    this.edgeTimer = null;
+    this.edgeAt = null;
+    if (!on) return;
+    this.edgeTimer = setInterval(() => {
+      const p = screen.getCursorScreenPoint();
+      let at = null;
+      for (const w of this.all()) {
+        const b = w.getBounds(), x = p.x - b.x, y = p.y - b.y;
+        if (y >= 0 && y <= 1 && x >= 0 && x < b.width) at = { w, x, y };
+      }
+      const last = this.edgeAt;
+      if (at && (at.w !== last?.w || at.x !== last.x || at.y !== last.y)) at.w.webContents.send('top-edge', { x: at.x, y: at.y });
+      if (last && at?.w !== last.w && !last.w.isDestroyed()) { // it left that row: where it is now, for that island
+        const b = last.w.getBounds();
+        last.w.webContents.send('top-edge', { x: p.x - b.x, y: p.y - b.y });
+      }
+      this.edgeAt = at;
+    }, 50);
+  }
+
   all() { return [...this.wins.values()].filter(w => !w.isDestroyed()); }
 
   send(channel, data) { for (const w of this.all()) w.webContents.send(channel, data); }

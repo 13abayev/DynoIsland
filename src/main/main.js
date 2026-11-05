@@ -149,6 +149,7 @@ function start() {
   launcher = new Launcher({ helper, hub, extensions, settings: config.settings, updateSettings: config.updateSettings, dataDir: config.dataDir(), projects: () => quick.projects(hub) });
   launcher.warm();
   islands = new Islands({ renderer: paths.RENDERER, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
+  islands.watchTopEdge(config.settings().showIsland === 'edge');
   registerHotkeys();
   watchAway();
   // started from the zip: setup installs Island first, so nothing in Windows points at this copy yet
@@ -876,6 +877,7 @@ function wireIpc(token) {
     if ('lowBattery' in changes) system.update();
     if ('checkUpdates' in changes && next.checkUpdates) checkUpdate?.();
     if ('launcherKey' in changes) registerLauncherKey();
+    if ('showIsland' in changes) islands.watchTopEdge(next.showIsland === 'edge');
     sendState();
     return next;
   });
