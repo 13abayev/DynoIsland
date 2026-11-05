@@ -1,0 +1,6 @@
+{
+  "id": "windows",
+  "name": "Windows",
+  "version": "1.0.0",
+  "description": "Agents on this PC: their hooks run Island's own helper, which reaches Island directly."
+}

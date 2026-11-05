@@ -15,7 +15,6 @@ const { reg } = require('./win');
 const { Hub } = require('./sessions');
 const { startServer, PORT } = require('./server');
 const { Helper } = require('./helper');
-const { Tunnels } = require('./tunnels');
 const { Limits } = require('./limits');
 const { Islands } = require('./islands');
 const { Clips } = require('./clips');
@@ -25,7 +24,12 @@ const { Jobs } = require('./jobs');
 const { Shelf } = require('./shelf');
 const { Phone } = require('./phone');
 const { jump } = require('./jump');
-const connect = require('./connect');
+const { Connections } = require('./connect');
+const { Extensions } = require('./extensions');
+const hookformat = require('./hookformat');
+const files = require('./files');
+const { run } = require('./run');
+const { openTerminal } = require('./terminal');
 const quick = require('./quick');
 const clip = require('./clip-io');
 const install = require('./install');
@@ -79,7 +83,7 @@ function logError(e) {
 process.on('uncaughtException', logError);
 process.on('unhandledRejection', logError);
 
-let islands = null, hub = null, server = null, helper = null, tunnels = null, limits = null;
+let islands = null, hub = null, server = null, helper = null, limits = null, extensions = null, connections = null;
 let clips = null, timers = null, system = null, jobs = null, shelf = null, phone = null, launcher = null;
 let fullscreenOn = null; // the display (id) where a fullscreen app is in front: only that island hides
 let lastApp = 0; // the last window in front that is not Island: where a clipboard item is pasted
@@ -99,10 +103,21 @@ else {
 
 function start() {
   const token = config.token();
-  hub = new Hub({ file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings });
+  makeExtensions();
+  hub = new Hub({
+    file: path.join(config.dataDir(), 'sessions.json'), settings: config.settings,
+    hooks: agent => extensions.agentExt(agent)?.brings.hook || null, where: whereOf,
+    marker: s => extensions.placeFor(s.src)?.marker?.(s) || '',
+  });
   jobs = new Jobs(path.join(config.dataDir(), 'jobs.json'));
-  server = startServer({ hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension, debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland, launcher: launcherDebug } });
+  server = startServer({
+    hub, jobs, token, settings: config.settings, onExtChange: sendState, onJump: goTo, onPair: pairExtension,
+    agentHook: agent => extensions.agentExt(agent)?.brings.hook || null,
+    onExtMessage: m => { for (const e of extensions.active()) e.brings.channel?.message?.(m); },
+    debug: { islands: islandsInfo, identify: () => islands.identify(), shelf: shelfDebug, open: view => openIsland(false, view || null), click: clickInIsland, launcher: launcherDebug, connections: () => connectStatus() },
+  });
   helper = new Helper(paths.HELPER_DLL);
+  loadExtensions();
   clips = new Clips(config.dataDir(), () => config.settings().clipboardHistory);
   timers = new Timers(path.join(config.dataDir(), 'timers.json'));
   system = new System({ helper, settings: config.settings });
@@ -131,9 +146,8 @@ function start() {
     for (const w of islands?.all() || []) w.webContents.send('battery-low', { name: b.name, level: b.level, sound: w === here && !quiet });
     toastSimple(`${b.name}: battery low`, `${b.level}% left. Time to charge it.`);
   });
-  launcher = new Launcher({ helper, hub, settings: config.settings, updateSettings: config.updateSettings, dataDir: config.dataDir(), projects: () => quick.projects(hub) });
+  launcher = new Launcher({ helper, hub, extensions, settings: config.settings, updateSettings: config.updateSettings, dataDir: config.dataDir(), projects: () => quick.projects(hub) });
   launcher.warm();
-  startTunnels();
   islands = new Islands({ renderer: paths.RENDERER, chosen: () => config.settings().displays, onReady: sendState, onLog: console.log });
   registerHotkeys();
   watchAway();
@@ -141,7 +155,7 @@ function start() {
   if (!install.canInstall()) {
     ensureStartMenuShortcut();
     checkStartWithWindows();
-    try { if (connect.repairWindows({ takeOver: paths.INSTALLED })) console.log('Island: the Claude Code hooks on Windows now run this Island'); } catch (e) { logError(e); }
+    try { for (const id of connections.repairWindows(paths.INSTALLED)) console.log(`Island: the ${id} hooks on Windows now run this Island`); } catch (e) { logError(e); }
     if (install.isInstalled()) install.keepRegistered().catch(logError);
   }
   checkUpdate = watchUpdates();
@@ -149,6 +163,59 @@ function start() {
   wireIpc(token);
   // the first start (or Island started from the zip): setup, in the island
   if (!config.settings().setupDone || install.canInstall()) setTimeout(() => openIsland(false, 'setup'), 2500);
+}
+
+// ---------- extensions ----------
+/** Every integration is an extension (extensions.js): the hub, the server and settings ask them. */
+function makeExtensions() {
+  if (extensions) return;
+  extensions = new Extensions({
+    builtin: path.join(paths.APP_DIR, 'src', 'extensions'), user: path.join(config.dataDir(), 'extensions'),
+    settings: config.settings, updateSettings: config.updateSettings, api: extensionApi, log: logError,
+  });
+  extensions.on('change', sendState);
+}
+
+function loadExtensions() {
+  makeExtensions();
+  if (connections) return;
+  extensions.load();
+  connections = new Connections({ extensions, token: config.token() });
+}
+
+/** What an extension gets from Island (EXTENSIONS.md lists it). */
+function extensionApi(ext) {
+  return {
+    id: ext.id, dir: ext.dir, port: PORT, token: () => config.token(), dataDir: config.dataDir(),
+    settings: config.settings, updateSettings: config.updateSettings,
+    // an agent's sessions, for agents that are not hooks (the browser add-on): the same events /hook takes
+    sessions: {
+      apply: (agent, meta, r) => hub.apply(agent, meta, { events: [], ...r }),
+      remove: key => hub.remove(key),
+      get: key => hub.sessions.get(key),
+      list: () => [...hub.sessions.values()],
+      key: (agent, id) => hub.sessionKey(agent, id),
+    },
+    helper: { request: req => helper.request(req) },
+    browserAddOn: { send: m => server.sendExt(m), connected: () => server.extConnected() },
+    changed: () => sendState(),
+    tell: channel => islands?.send(channel), // the island page reacts (settings reloads its connections on 'tunnels')
+    log: (...a) => console.log(`Island ${ext.id}:`, ...a),
+    lib: { claudeHooks: hookformat, files, run, openTerminal, wslInfo, windowsClaude: quick.windowsClaude, paths, clip, shell, powerMonitor, fs, os, path, spawn },
+  };
+}
+
+/** Where a session runs, for you: its agent can say ("Claude app"), else its place ("WSL", "jabrail96"). */
+function whereOf(s) {
+  const agent = extensions?.agents().get(s.agent);
+  return agent?.where?.(s) || extensions?.placeFor(s.src)?.label?.(s) || '';
+}
+
+/** What the island shows about each agent (its name, color and icon) and each place. */
+function identities() {
+  const agents = {};
+  for (const [id, a] of extensions.agents()) agents[id] = { name: a.name, color: a.color || '', icon: a.icon || '' };
+  return agents;
 }
 
 // ---------- what the helper tells us ----------
@@ -199,7 +266,8 @@ async function islandsInfo() {
          timers: (state.timers || []).length, focus: state.focus, pages: Object.keys(ui.pages),
          jobs: (state.jobs || []).map(j => [j.name, j.state, j.percent, j.last].join(' | ')), phone: state.phone, hud,
          open, view, tabs: document.getElementById('tabs').innerText.split('\\n').join(' | '), body: open ? document.getElementById('body').innerText.slice(0, 3000) : '',
-         cards: open ? document.getElementById('cards').innerText.slice(0, 500) : '', checks: state.checks, setupDone: state.settings.setupDone })`,
+         cards: open ? document.getElementById('cards').innerText.slice(0, 500) : '', checks: state.checks, setupDone: state.settings.setupDone,
+         places: (() => { try { return !conn ? 'not loaded' : placesSection().length + ' chars'; } catch (e) { return 'error: ' + e.message; } })() })`,
     ).catch(e => ({ error: e.message })),
   })));
   return { fullscreenOn, clipEvents, clips: clips.items.length, windows, displays: islands?.list() };
@@ -234,9 +302,12 @@ function sendState() {
       ...live,
       ...system.view(),
       ...timers.view(),
-      ...jobs.view(),
+      // your jobs, each with where it runs (its place extension's name for it)
+      jobs: jobs.view().jobs.map(j => ({ ...j, where: extensions.placeFor(j.src)?.label?.({ ...j, host: j.alias || j.host }) || '' })),
       phone: phone.status(),
-      ext: server.extConnected(),
+      agents: identities(), // each agent's name, color and icon (from its extension)
+      extensions: extensions.list(), // for settings → Sessions: each one, with its own content
+      extSetups: extensionSetups(), // their own setup steps (the browser add-on's)
       settings: config.settings(),
       limitsStatus: limits?.status || 'off',
       hotkeys: HOTKEYS_SHOWN,
@@ -256,7 +327,8 @@ function noteAll(text, sound = null, ms = 4000) {
 }
 
 // ---------- notifications ----------
-const where = s => (s.src === 'ssh' ? ` (${s.host})` : s.src === 'wsl' ? ' (WSL)' : '');
+// "web-shop (jabrail96)": where it runs, unless that is this PC or a browser tab
+const where = s => (extensions.placeFor(s.src)?.os === 'linux' ? ` (${whereOf(s)})` : '');
 const label = s => (s.project || 'Session') + where(s);
 
 function notify({ kind, sessions }) {
@@ -305,7 +377,7 @@ async function goTo(key) {
   const s = hub.sessions.get(key);
   if (!s) return;
   hub.visited(key);
-  await jump(s, { helper, server });
+  await jump(s, { helper, extensions });
 }
 
 /** Opens the island on the display your mouse is on (on a given page, or toggles it). */
@@ -429,7 +501,7 @@ function watchTimers() {
 
 // ---------- your jobs (island run -- …) ----------
 const took = sec => (sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m`);
-const jobWhere = j => (j.src === 'ssh' ? ` on ${j.host}` : j.src === 'wsl' ? ' in WSL' : '');
+const jobWhere = j => (extensions.placeFor(j.src)?.os === 'linux' ? ` (${extensions.placeFor(j.src).label({ ...j, host: j.alias || j.host })})` : '');
 
 function watchJobs() {
   jobs.on('change', sendState);
@@ -443,7 +515,8 @@ function watchJobs() {
   });
   jobs.on('message', m => {
     noteAll(m.text, config.settings().sound !== 'off' ? 'done' : null, 6000);
-    toastSimple(`Message from ${m.src === 'ssh' ? m.alias || m.host : m.src === 'wsl' ? 'WSL' : 'a script'}`, m.text);
+    const from = extensions.placeFor(m.src)?.label?.({ ...m, host: m.alias || m.host });
+    toastSimple(`Message from ${from && extensions.placeFor(m.src).os === 'linux' ? from : 'a script'}`, m.text);
   });
 }
 
@@ -516,54 +589,50 @@ function readNotes() {
   try { return { text: '', todos: [], ...JSON.parse(fs.readFileSync(notesFile(), 'utf8')) }; } catch { return { text: '', todos: [] }; }
 }
 
-// ---------- SSH servers: Island's own tunnel to each connected one ----------
-function startTunnels() {
-  tunnels = new Tunnels(PORT);
-  try {
-    // servers connected by an earlier Island (a tunnel line in ~/.ssh/config) move over to Island's own tunnel
-    const old = connect.takeOverOldTunnelLines();
-    if (old.length) config.updateSettings({ sshServers: [...new Set([...config.settings().sshServers, ...old])] });
-  } catch (e) { console.log('Island: could not read your SSH config:', e.message); }
-  tunnels.set(config.settings().sshServers);
-  tunnels.on('change', () => islands?.send('tunnels'));
-  powerMonitor.on('resume', () => tunnels.retryNow());
-}
-
-function setServer(alias, on) {
-  const list = config.settings().sshServers.filter(a => a !== alias);
-  if (on) list.push(alias);
-  config.updateSettings({ sshServers: list });
-  tunnels.set(list);
-}
+// ---------- your places and their agents (connect.js, through the extensions) ----------
+let connCache = null, refreshChecks = null; // the last status settings or setup asked for (WSL is not started just for the checks)
 
 async function connectStatus() {
-  const status = await connect.status();
-  const servers = config.settings().sshServers;
-  status.ssh = status.ssh.map(h => ({ ...h, connected: servers.includes(h.alias), tunnel: tunnels.state(h.alias) }));
-  connCache = status; // for the checks (they never start WSL themselves)
-  windowsHooked = status.windows;
-  wslThere = status.wslInstalled;
+  const status = await connections.status();
+  connCache = status;
   sendState();
   return status;
 }
 
 // ---------- setup, and what Island needs from you ----------
-let connCache = null, windowsHooked = false, wslThere = false, refreshChecks = null;
 const pairWaiters = []; // browser extensions asking to connect, waiting for your answer in the island
 let extPairingUntil = 0; // setup's browser step shows: an extension that asks gets in without asking you
+let quickConnected = 0; // places known to be connected without asking WSL (this PC's hooks, your servers)
+
+/** The extensions with a setup step of their own (the browser add-on's), and whether each is done. */
+function extensionSetups() {
+  const out = [];
+  for (const e of extensions.active()) {
+    try { const s = e.brings.ui?.setup?.(); if (s) out.push({ id: e.id, ...s }); } catch (err) { logError(err); }
+  }
+  return out;
+}
 
 function checkList() {
+  const places = connCache?.places || [];
+  const fromPlaces = connCache ? places.filter(p => p.connected).length : quickConnected;
+  const addOns = extensions.active().reduce((n, e) => n + (Number(e.brings.connected?.()) || 0), 0);
   return checks.list({
-    settings: config.settings(), windowsConnected: windowsHooked, conn: connCache, wslInstalled: wslThere, ext: server.extConnected(),
+    settings: config.settings(), connected: fromPlaces + addOns,
+    unknown: !connCache && extensions.places().some(p => p.os === 'linux' && !p.remembers), // maybe connected in WSL
+    setups: extensionSetups().map(s => ({ id: s.id, title: s.title, done: !!s.done })),
     phone: phone.status(), helper, hotkeysTaken: [...hotkeysTaken].map(k => k.replace('Control', 'Ctrl')),
   });
 }
 
-/** Looks at what the checks need now and then (Windows notifications, the Windows hooks, WSL). */
+/** Looks at what the checks need now and then (Windows notifications; this PC's hooks; your servers). */
 function watchChecks() {
   const look = async () => {
-    try { windowsHooked = connect.windowsConnected(); } catch { windowsHooked = false; }
-    wslThere = (await wslInfo()).installed;
+    try {
+      const win = extensions.places().find(p => p.os === 'windows');
+      const here = win && extensions.installers('windows').some(e => { try { return e.brings.install.windows.installed(win); } catch { return false; } });
+      quickConnected = (here ? 1 : 0) + (config.settings().sshServers || []).length;
+    } catch { quickConnected = 0; }
     await checks.readNotifications();
     sendState();
   };
@@ -592,35 +661,10 @@ function answerPair(yes) {
   sendState();
 }
 
-const BROWSERS = {
-  chrome: ['ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA'].map(v => process.env[v] && path.join(process.env[v], 'Google', 'Chrome', 'Application', 'chrome.exe')),
-  edge: ['ProgramFiles(x86)', 'ProgramFiles'].map(v => process.env[v] && path.join(process.env[v], 'Microsoft', 'Edge', 'Application', 'msedge.exe')),
-};
-const browserExe = id => (BROWSERS[id] || []).find(p => p && fs.existsSync(p));
-
-/** What setup finds on this PC: Claude Code and Codex (on Windows, in WSL), browsers, servers. */
+/** What setup finds on this PC: every place with the agents found there, and where Claude Code runs for quick tasks. */
 async function detect() {
-  const [wsl, inWsl, status, runIn] = await Promise.all([wslInfo(), connect.detectWsl(), connectStatus(), quick.place('auto')]);
-  return {
-    claudeWindows: !!quick.windowsClaude() || fs.existsSync(path.join(os.homedir(), '.claude')),
-    wsl, inWsl, status, claudeIn: runIn?.src || '',
-    browsers: Object.keys(BROWSERS).filter(browserExe),
-    extensionDir: paths.EXTENSION_DIR,
-  };
-}
-
-/** A terminal that sets up key login to a server: makes a key if there is none and copies it there (you type its password once). */
-function sshKeyLogin(alias) {
-  if (!/^[\w.@-]+$/.test(alias) || !connect.sshHosts().some(h => h.alias === alias)) return false;
-  const key = path.join(os.homedir(), '.ssh', 'id_ed25519');
-  const script = [
-    `Write-Host 'Island: key login to ${alias}. Type the server password when it asks.'`,
-    `if (-not (Test-Path '${key}')) { ssh-keygen -t ed25519 -N '""' -f '${key}' }`,
-    `Get-Content '${key}.pub' | ssh ${alias} 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'`,
-    `if ($LASTEXITCODE -eq 0) { Write-Host 'Done. Go back to Island and press Connect.' } else { Write-Host 'That did not work (see above).' }`,
-  ].join('\n');
-  spawn('powershell.exe', ['-NoExit', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { detached: true, stdio: 'ignore' }).unref();
-  return true;
+  const [status, runIn] = await Promise.all([connectStatus(), quick.place('auto')]);
+  return { status, claudeIn: runIn?.src || '' };
 }
 
 // ---------- installing, uninstalling, updates ----------
@@ -664,11 +708,9 @@ async function uninstall() {
   });
   if (r.response !== 0) { uninstalling = false; return false; }
   const quietly = p => Promise.race([Promise.resolve(p).catch(() => null), wait(30 * 1000)]); // a server that does not answer
-  try { if (connect.windowsConnected()) connect.windowsConnect(false); } catch (e) { logError(e); }
-  const st = await quietly(connect.status());
-  for (const agent of ['claude', 'codex']) if (st?.wsl?.[agent]) await quietly(connect.connect(`wsl-${agent}`, false));
-  tunnels?.set([]);
-  for (const alias of config.settings().sshServers) await quietly(connect.connect('ssh', false, alias));
+  loadExtensions(); // (Island was not running: started only to uninstall)
+  try { await connections.disconnectAll(quietly); } catch (e) { logError(e); }
+  for (const e of extensions.active()) extensions.stop(e); // a server's tunnel closes
   setStartWithWindows(false);
   config.updateSettings({ startWithWindows: false, sshServers: [] });
   await reg('delete', STARTUP_APPROVED, '/v', APP_ID, '/f');
@@ -736,13 +778,26 @@ function wireIpc(token) {
   handle('jump', key => goTo(key));
   handle('act', (key, action, arg) => hub.act(key, action, arg));
   handle('connect:status', () => connectStatus());
-  handle('connect:run', async (target, on, arg) => {
+  // a place: Connect (on), Update (on again: the newest hooks) or Disconnect
+  handle('connect:run', async (placeId, on) => {
     try {
-      if (target === 'ssh' && !on) setServer(arg, false); // close the tunnel first
-      await connect.connect(target, on, arg, token);
-      if (target === 'ssh' && on) setServer(arg, true);
+      await connections.connect(String(placeId), !!on);
       return { ok: true, status: await connectStatus() };
-    } catch (e) { return { ok: false, error: e.message, status: await connectStatus() }; }
+    } catch (e) { return { ok: false, error: e.message, fix: e.fix || null, status: await connectStatus() }; }
+  });
+  // extensions: on or off (an agent then goes into, or out of, your connected places), and their own buttons
+  handle('extensions:enable', async (id, on) => {
+    const ext = extensions.all.get(String(id));
+    if (!ext) return { ok: false, error: 'No such extension.' };
+    try {
+      if (!on && ext.brings?.install) await connections.setAgent(ext.id, false); // out of your places first
+      extensions.setEnabled(ext.id, !!on);
+      if (on && ext.brings?.install) await connections.setAgent(ext.id, true);
+      return { ok: true, status: await connectStatus() };
+    } catch (e) { return { ok: false, error: e.message, status: await connectStatus().catch(() => null) }; }
+  });
+  handle('extensions:action', async (id, name, arg) => {
+    try { return { ok: true, ...((await extensions.action(String(id), String(name), arg)) || {}) }; } catch (e) { return { ok: false, error: e.message }; }
   });
   handle('displays:list', () => islands.list());
   handle('displays:set', ids => {
@@ -774,7 +829,7 @@ function wireIpc(token) {
   handle('answer', (key, choice) => attempt(() => hub.answer(key, choice)));
   handle('reply', (key, text) => attempt(() => hub.reply(key, text)));
   // the quick prompt
-  handle('quick:projects', () => quick.projects(hub));
+  handle('quick:projects', async () => (await quick.projects(hub)).map(p => ({ ...p, where: extensions.placeFor(p.src)?.label?.(p) || '' })));
   handle('quick:ask', async (id, prompt, opts = {}) => {
     const p = (await quick.projects(hub)).find(x => x.id === id);
     if (!p) return { ok: false, error: 'That project is not known any more.' };
@@ -846,11 +901,9 @@ function wireIpc(token) {
   handle('jobs:seen', () => jobs.seen());
   handle('focus:start', min => timers.focusStart(Math.max(1, Number(min) || 25)));
   handle('focus:stop', () => timers.focusStop());
-  handle('copy-token', async () => { await clip.writeText(token); return true; });
-  handle('open-extension-folder', () => shell.openPath(paths.EXTENSION_DIR));
   // Island itself: installing it (from the zip), uninstalling it, updates
   handle('app:install', async () => {
-    const letGo = async () => { globalShortcut.unregisterAll(); tunnels?.stop(); helper?.stop(); await server.close(); };
+    const letGo = async () => { globalShortcut.unregisterAll(); stopExtensions(); helper?.stop(); await server.close(); };
     try { await install.install(letGo); return { ok: true }; } catch (e) { logError(e); return { ok: false, error: e.message }; }
   });
   handle('app:uninstall', () => uninstall());
@@ -876,9 +929,7 @@ function wireIpc(token) {
   // setup
   handle('setup:detect', async () => { refreshChecks?.(); return detect(); });
   handle('setup:ext-pairing', on => { extPairingUntil = on ? Date.now() + 15 * 60 * 1000 : 0; if (on && pairWaiters.length) answerPair(true); });
-  handle('setup:open-extensions', id => { const exe = browserExe(id); if (exe) spawn(exe, [`${id}://extensions`], { detached: true, stdio: 'ignore' }).unref(); });
   handle('ext:pair-answer', yes => answerPair(yes));
-  handle('ssh:key-login', alias => sshKeyLogin(String(alias || '')));
   handle('open-windows-settings', () => shell.openExternal('ms-settings:notifications'));
   ipcMain.on('menu', e => {
     const w = islands.fromSender(e.sender);
@@ -891,9 +942,14 @@ function wireIpc(token) {
   });
 }
 
+/** The extensions let go of what they hold (a server's tunnel). */
+function stopExtensions() {
+  for (const e of extensions?.active() || []) extensions.stop(e);
+}
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  tunnels?.stop();
+  stopExtensions();
   helper?.stop();
   server?.close();
 });

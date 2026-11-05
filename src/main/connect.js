@@ -1,224 +1,171 @@
 'use strict';
-// Connecting Island to your agents, and disconnecting again. Nothing here runs by itself: only when you
-// press Connect / Disconnect in Island's settings.
-//   Claude Code on Windows  → hooks in %USERPROFILE%\.claude\settings.json that run the helper (dotnet IslandHelper.dll)
-//   Claude Code / Codex in WSL → ~/.island/ in WSL + hooks in ~/.claude/settings.json / ~/.codex/hooks.json
-//   an SSH server           → the same ~/.island/ + hooks on the server (Island's own tunnel, tunnels.js, carries
-//                             their events back here)
-// Your own settings stay as they are; the first time a file is changed, a copy is kept as <file>.island-backup.
+// Connecting the places your agents run (Windows, WSL, your servers: place extensions) to Island, and
+// disconnecting them again. Connecting a place puts every agent extension that is on and found there into it (its
+// hooks, its plugin); on Linux places Island's Linux kit (hooks/linux) goes into ~/.island first. Nothing here runs
+// by itself: only Connect / Update / Disconnect, switching an agent extension on or off, and the repair at start.
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 const { PORT } = require('./server');
-const { DOTNET, HELPER_DLL, HELPER_MISSING, LINUX_HOOKS: LINUX } = require('./paths');
-const { wslInfo } = require('./win');
+const { LINUX_HOOKS } = require('./paths');
 
-const HELPER = HELPER_DLL.replace(/\\/g, '/');
-const RUN_HELPER = `"${DOTNET.replace(/\\/g, '/')}" "${HELPER}"`;
-const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
+const KIT = ['hook.sh', 'reply.sh', 'statusline.sh', 'info.py', 'merge.py', 'island.py'];
+const b64 = s => Buffer.from(String(s)).toString('base64');
 
-// ---------- Claude Code on Windows ----------
-const winSettingsFile = () => path.join(os.homedir(), '.claude', 'settings.json');
-const isOurs = h => typeof h?.command === 'string' && h.command.includes('IslandHelper.dll');
-
-function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
-    if (e.code === 'ENOENT') return {};
-    throw new Error(`${file} is not valid JSON, so Island left it alone.`);
+class Connections {
+  /** @param {{ extensions, token: string }} options */
+  constructor({ extensions, token }) {
+    this.ext = extensions;
+    this.token = token;
+    this.known = new Map(); // place id → what the last connect there found (a server is not asked on every look)
   }
-}
 
-function writeFileKeepingBackup(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (fs.existsSync(file) && !fs.existsSync(file + '.island-backup')) fs.copyFileSync(file, file + '.island-backup');
-  fs.writeFileSync(file + '.island-tmp', text);
-  fs.renameSync(file + '.island-tmp', file);
-}
-
-function stripHooks(settings) {
-  const hooks = settings.hooks || {};
-  for (const event of Object.keys(hooks)) {
-    const groups = (hooks[event] || []).map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
-    if (groups.length) hooks[event] = groups; else delete hooks[event];
-  }
-  if (Object.keys(hooks).length) settings.hooks = hooks; else delete settings.hooks;
-}
-
-const ourHooks = s => Object.values(s.hooks || {}).flatMap(groups => (groups || []).flatMap(g => (g.hooks || []).filter(isOurs)));
-
-function windowsConnected() {
-  return ourHooks(readJson(winSettingsFile())).length > 0;
-}
-
-/**
- * At start: hooks that run a helper somewhere else are written again for this one, when that helper is gone (Island
- * moved, or its project folder was deleted) or when this is the installed Island (it takes over from the project
- * folder). Returns whether it did.
- */
-function repairWindows({ takeOver = false } = {}) {
-  const s = readJson(winSettingsFile());
-  const hooks = [...ourHooks(s), ...(isOurs(s.statusLine) ? [s.statusLine] : [])];
-  if (!hooks.length || !fs.existsSync(HELPER) || hooks.every(h => h.command.startsWith(RUN_HELPER))) return false;
-  const gone = hooks.some(h => { const dll = /"([^"]*IslandHelper\.dll)"/.exec(h.command)?.[1]; return !dll || !fs.existsSync(dll); });
-  if (!gone && !takeOver) return false;
-  windowsConnect(true);
-  return true;
-}
-
-function windowsConnect(on) {
-  const file = winSettingsFile(), s = readJson(file);
-  stripHooks(s);
-  if (on) {
-    if (!fs.existsSync(HELPER)) throw new Error(HELPER_MISSING);
-    s.hooks = s.hooks || {};
-    const add = (event, hook) => (s.hooks[event] = s.hooks[event] || []).push({ hooks: [{ type: 'command', ...hook }] });
-    for (const event of CLAUDE_EVENTS) add(event, { command: `${RUN_HELPER} hook claude`, timeout: 5 });
-    // answering from the island: permission prompts wait for your answer there, finished sessions for your reply
-    add('PermissionRequest', { command: `${RUN_HELPER} hook claude wait`, timeout: 1800 });
-    add('Stop', { command: `${RUN_HELPER} reply claude`, asyncRewake: true, timeout: 10800 });
-    // Island's status line, unless you have one of your own (Island's own one from before is replaced)
-    if (!s.statusLine || isOurs(s.statusLine)) s.statusLine = { type: 'command', command: `${RUN_HELPER} statusline claude` };
-  } else if (isOurs(s.statusLine)) delete s.statusLine;
-  writeFileKeepingBackup(file, JSON.stringify(s, null, 2) + '\n');
-}
-
-// ---------- WSL and SSH servers (Linux) ----------
-function run(cmd, args, input, { timeout = 60000 } = {}) {
-  return new Promise(resolve => {
-    let out = '', err = '';
-    const child = spawn(cmd, args, { windowsHide: true, env: { ...process.env, WSL_UTF8: '1' } });
-    const timer = setTimeout(() => { child.kill(); err += '\ntook too long'; }, timeout);
-    child.stdout.on('data', d => (out += d));
-    child.stderr.on('data', d => (err += d));
-    child.on('error', e => { clearTimeout(timer); resolve({ code: -1, out, err: e.message }); });
-    child.on('close', code => { clearTimeout(timer); resolve({ code, out: out.replace(/\r/g, ''), err: err.replace(/\r/g, '') }); });
-    child.stdin.on('error', () => {});
-    child.stdin.end(input);
-  });
-}
-
-const wsl = script => run('wsl.exe', ['-e', 'bash', '-s'], script);
-const ssh = (alias, script) => run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', alias, 'bash -s'], script);
-
-/** A script that puts Island's files into ~/.island/ and then runs merge.py with `actions`. */
-function linuxInstallScript({ src, alias, token, actions }) {
-  const read = f => fs.readFileSync(path.join(LINUX, f), 'utf8').replace(/\r\n/g, '\n');
-  const files = {
-    'hook.sh': read('hook.sh'), 'reply.sh': read('reply.sh'), 'statusline.sh': read('statusline.sh'), 'info.py': read('info.py'),
-    'merge.py': read('merge.py'), 'island.py': read('island.py'), token, src, port: String(PORT), alias: alias || '',
-  };
-  const lines = ['set -e', 'mkdir -p "$HOME/.island"', 'chmod 700 "$HOME/.island"', 'cd "$HOME/.island"'];
-  for (const [name, content] of Object.entries(files)) lines.push(`echo '${Buffer.from(content).toString('base64')}' | base64 -d > '${name}'`);
-  lines.push('chmod 600 token', 'chmod 755 hook.sh reply.sh statusline.sh island.py');
-  lines.push('command -v python3 >/dev/null || { echo "ISLAND-ERROR: python3 is not installed here"; exit 3; }');
-  // the "island" command (island run -- …) comes along with every connection
-  for (const a of [...actions, 'cli on']) lines.push(`python3 merge.py ${a}`);
-  return lines.join('\n') + '\n';
-}
-
-const linuxScript = actions =>
-  `if [ -f "$HOME/.island/merge.py" ]; then ${actions.map(a => `python3 "$HOME/.island/merge.py" ${a}`).join(' && ')}; else echo '{"claude": false, "codex": false}'; fi\n`;
-
-function parseResult(r, where) {
-  const last = r.out.trim().split('\n').pop() || '';
-  try { return JSON.parse(last); } catch {}
-  const why = (r.out + '\n' + r.err).match(/ISLAND-ERROR: (.*)/)?.[1] || r.err.trim().split('\n').pop() || 'no answer';
-  throw new Error(`${where}: ${why}`);
-}
-
-// ---------- SSH config: your servers ----------
-const sshConfigFile = () => path.join(os.homedir(), '.ssh', 'config');
-// earlier versions of Island added this line to a connected server's block; Island now keeps its own tunnel
-const tunnelLine = new RegExp(`^\\s*RemoteForward\\s+${PORT}\\b`, 'i');
-
-function sshHosts() {
-  let text = '';
-  try { text = fs.readFileSync(sshConfigFile(), 'utf8'); } catch { return []; }
-  const hosts = [];
-  let current = [];
-  for (const line of text.split(/\r?\n/)) {
-    const host = /^\s*Host\s+(.+?)\s*$/i.exec(line);
-    if (host) {
-      current = host[1].split(/\s+/).filter(a => !/[*?!]/.test(a)).map(alias => ({ alias, oldTunnelLine: false }));
-      hosts.push(...current);
-    } else if (/^\s*Match\s/i.test(line)) current = [];
-    else if (tunnelLine.test(line)) current.forEach(h => (h.oldTunnelLine = true));
-  }
-  return hosts;
-}
-
-/** Servers connected by an earlier Island (a tunnel line in ~/.ssh/config): removes those lines, returns the servers. */
-function takeOverOldTunnelLines() {
-  const old = sshHosts().filter(h => h.oldTunnelLine).map(h => h.alias);
-  for (const alias of old) setTunnel(alias, false);
-  return old;
-}
-
-function setTunnel(alias, on) {
-  const file = sshConfigFile();
-  const text = fs.readFileSync(file, 'utf8');
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
-  let start = -1, end = lines.length;
-  for (let i = 0; i < lines.length; i++) {
-    const host = /^\s*Host\s+(.+?)\s*$/i.exec(lines[i]);
-    if (start < 0 && host && host[1].split(/\s+/).includes(alias)) { start = i; continue; }
-    if (start >= 0 && /^\s*(Host|Match)\s/i.test(lines[i])) { end = i; break; }
-  }
-  if (start < 0) throw new Error(`${alias} is not in your SSH config.`);
-  const at = lines.slice(start + 1, end).findIndex(l => tunnelLine.test(l));
-  if (on && at < 0) {
-    const indent = lines.slice(start + 1, end).find(l => l.trim())?.match(/^\s*/)[0] || '    ';
-    lines.splice(start + 1, 0, `${indent}RemoteForward ${PORT} 127.0.0.1:${PORT}`);
-  } else if (!on && at >= 0) lines.splice(start + 1 + at, 1);
-  else return;
-  writeFileKeepingBackup(file, lines.join(eol));
-}
-
-// ---------- what the settings page uses ----------
-async function status() {
-  // without WSL, wsl.exe is never started (it would offer to install WSL)
-  const info = await wslInfo();
-  let inWsl = null;
-  if (info.installed) {
-    const r = await wsl(linuxScript(['status']));
-    try { inWsl = r.code === 0 ? parseResult(r, 'WSL') : null; } catch {}
-  }
-  let windows = false;
-  try { windows = windowsConnected(); } catch {}
-  const helper = fs.existsSync(HELPER);
-  return { windows, wslInstalled: info.installed, distro: info.default, wsl: inWsl, ssh: sshHosts().map(h => ({ alias: h.alias })), helper, helperMissing: helper ? '' : HELPER_MISSING };
-}
-
-/** For setup: which agents are in WSL ({ claude, codex }, or null without WSL or when it did not answer). */
-async function detectWsl() {
-  if (!(await wslInfo()).installed) return null;
-  const has = name => `{ [ -d "$HOME/.${name}" ] || command -v ${name} >/dev/null; } && echo true || echo false`;
-  const r = await wsl(`printf '{"claude": %s, "codex": %s}\\n' "$(${has('claude')})" "$(${has('codex')})"\n`);
-  try { return r.code === 0 ? parseResult(r, 'WSL') : null; } catch { return null; }
-}
-
-async function connect(target, on, arg, token) {
-  if (target === 'windows') windowsConnect(on);
-  else if (target === 'wsl-claude' || target === 'wsl-codex') {
-    if (!(await wslInfo()).installed) throw new Error('WSL is not installed on this PC.');
-    const agent = target.slice(4);
-    const script = on ? linuxInstallScript({ src: 'wsl', token, actions: [`install ${agent}`] }) : linuxScript([`uninstall ${agent}`, 'cli off --if-unused']);
-    parseResult(await wsl(script), 'WSL');
-  } else if (target === 'ssh') {
-    const alias = String(arg || '');
-    if (!sshHosts().some(h => h.alias === alias)) throw new Error(`${alias} is not in your SSH config.`);
-    if (on) {
-      const r = await ssh(alias, linuxInstallScript({ src: 'ssh', alias, token, actions: ['install claude', 'install codex --if-present'] }));
-      if (r.code === 255) throw new Error(`Could not log in to ${alias} without a password. Connect once from VS Code or a terminal, then try again.`);
-      parseResult(r, alias);
-    } else {
-      const r = await ssh(alias, linuxScript(['uninstall claude', 'uninstall codex', 'cli off']));
-      if (r.code !== 0) throw new Error(`${alias} could not be reached to remove Island's hooks there. Island stopped its tunnel, so they can do no harm.`);
+  /** Every place with { id, kind, label, connected, agents: [{ id, name, found, connected }], down, error, note }. */
+  async status() {
+    const out = [];
+    for (const kind of this.ext.places()) {
+      let list = [];
+      try { list = await kind.list(); } catch (e) { list = []; }
+      for (const place of list) out.push(await this.look(kind, place));
     }
-  } else throw new Error('Unknown connection.');
-  return status();
+    return { places: out };
+  }
+
+  agentName(ext) { return ext.brings.agents?.[0]?.name || ext.manifest.name || ext.id; }
+
+  async look(kind, place) {
+    const base = { id: place.id, kind: kind.id, name: kind.name, label: place.label, os: kind.os, note: place.note || '', connected: !!place.connected, down: false, error: '', agents: [] };
+    if (kind.os === 'windows') {
+      base.ready = kind.ready?.() ?? true;
+      base.missing = base.ready ? '' : kind.missing || '';
+      base.agents = this.ext.installers('windows').map(e => {
+        const w = e.brings.install.windows;
+        let found = false, connected = false;
+        try { found = !!w.found(); connected = !!w.installed(kind); } catch {}
+        return { id: e.id, name: this.agentName(e), found, connected };
+      });
+      base.connected = base.agents.some(a => a.connected);
+      return base;
+    }
+    if (kind.remembers) { // a server: what its last connect found (it is not asked on every look)
+      base.agents = this.known.get(place.id) || [];
+      base.asked = this.known.has(place.id);
+      return base;
+    }
+    try {
+      const r = await this.runLinux(kind, place, { change: null });
+      base.agents = r.agents;
+      base.connected = r.agents.some(a => a.connected);
+    } catch (e) { base.down = true; base.error = e.message; }
+    return base;
+  }
+
+  async find(id) {
+    for (const kind of this.ext.places()) {
+      const place = (await kind.list()).find(p => p.id === id);
+      if (place) return { kind, place };
+    }
+    throw new Error('That place is not known (any more).');
+  }
+
+  /**
+   * Connect (on) or disconnect a place: every agent that is on and found there goes in, or every one comes out.
+   * only: just that agent extension (switched on or off).
+   */
+  async connect(id, on, { only = null } = {}) {
+    const { kind, place } = await this.find(id);
+    if (kind.os === 'windows') return this.connectWindows(kind, on, only);
+    kind.connecting?.(place, on); // a server: its tunnel closes before Island's hooks go
+    const r = await this.runLinux(kind, place, { change: on, only });
+    if (kind.remembers) this.known.set(place.id, r.agents);
+    if (on && !only && !r.agents.some(a => a.connected)) {
+      throw new Error(`Island found no agent there to connect (${this.ext.installers('linux').map(e => this.agentName(e)).join(', ')}).`);
+    }
+    if (!only) kind.connected?.(place, on); // a server: Island keeps its tunnel open
+    return r;
+  }
+
+  connectWindows(kind, on, only) {
+    const exts = this.ext.installers('windows').filter(e => !only || e.id === only);
+    let done = 0;
+    for (const e of exts) {
+      const w = e.brings.install.windows;
+      if (on && !w.found()) continue;
+      if (!on && !w.installed(kind)) continue;
+      w.connect(kind, on);
+      done++;
+    }
+    if (on && !done && !only) throw new Error(`Island found no agent on this PC to connect (${exts.map(e => this.agentName(e)).join(', ')}).`);
+  }
+
+  /** An agent extension was switched on or off: it goes into, or out of, every connected place. */
+  async setAgent(extId, on) {
+    const problems = [];
+    for (const p of (await this.status()).places) {
+      if (!p.connected) continue;
+      try { await this.connect(p.id, on, { only: extId }); } catch (e) { problems.push(`${p.label}: ${e.message}`); }
+    }
+    if (problems.length) throw new Error(problems.join(' · '));
+  }
+
+  /** At start: hooks on this PC that run a helper that is gone (or, installed, the project folder's) are fixed. */
+  repairWindows(takeOver) {
+    const kind = this.ext.places().find(k => k.os === 'windows');
+    if (!kind) return [];
+    return this.ext.installers('windows').filter(e => e.brings.install.windows.repair?.(kind, takeOver)).map(e => e.id);
+  }
+
+  /** Uninstalling Island: every connected place is disconnected (a server that does not answer is skipped). */
+  async disconnectAll(wait) {
+    for (const p of (await this.status()).places) {
+      if (p.connected) await wait(this.connect(p.id, false).catch(() => null));
+    }
+  }
+
+  // ---------- Linux places: one script, run there (wsl.exe / ssh … bash -s) ----------
+  /**
+   * change: true (connect: the kit, then every agent found), false (disconnect: every agent out), null (only look).
+   * Resolves { agents: [{ id, name, found, connected }], cli }.
+   */
+  async runLinux(kind, place, { change, only = null }) {
+    const exts = this.ext.installers('linux');
+    const lines = [];
+    if (change === true) {
+      const read = f => fs.readFileSync(path.join(LINUX_HOOKS, f), 'utf8').replace(/\r\n/g, '\n');
+      const kit = kind.kit(place);
+      const files = Object.fromEntries(KIT.map(f => [f, read(f)]));
+      Object.assign(files, { token: this.token, src: kit.src, port: String(PORT), alias: kit.alias || '' });
+      for (const e of exts) Object.assign(files, e.brings.install.linux.files || {}); // an agent's own files (its plugin)
+      lines.push('set -e', 'mkdir -p "$HOME/.island"', 'chmod 700 "$HOME/.island"', 'cd "$HOME/.island"');
+      for (const [name, content] of Object.entries(files)) lines.push(`echo '${b64(content)}' | base64 -d > '${name}'`);
+      lines.push('chmod 600 token', 'chmod 755 hook.sh reply.sh statusline.sh island.py');
+      lines.push('command -v python3 >/dev/null || { echo "ISLAND-ERROR: python3 is not installed here"; exit 3; }');
+    }
+    lines.push('set +e', 'cd "$HOME"', 'yes_no() { if eval "$1" >/dev/null 2>&1; then echo true; else echo false; fi; }');
+    exts.forEach((e, i) => {
+      const l = e.brings.install.linux;
+      lines.push(`found${i}() { ${l.found || 'true'}; }`);
+      if (change === null || (only && e.id !== only)) return;
+      if (change) lines.push(`if found${i} >/dev/null 2>&1; then ( cd "$HOME/.island" && ${l.install} ) >/dev/null 2>&1; fi`);
+      else lines.push(`( cd "$HOME/.island" 2>/dev/null && ${l.uninstall} ) >/dev/null 2>&1`);
+    });
+    // the island command (island run -- …) comes along with any connection, and goes when the last agent does
+    if (change === true) lines.push('python3 "$HOME/.island/merge.py" cli on >/dev/null 2>&1');
+    if (change === false && !only) lines.push('python3 "$HOME/.island/merge.py" cli off >/dev/null 2>&1');
+    const parts = exts.map((e, i) => `\\"${e.id}\\": {\\"found\\": %s, \\"connected\\": %s}`);
+    const args = exts.map((e, i) => `"$(yes_no found${i})" "$(yes_no '${e.brings.install.linux.installed.replace(/'/g, `'\\''`)}')"`);
+    lines.push(`printf "{\\"agents\\": {${parts.join(', ')}}, \\"cli\\": %s}\\n" ${args.join(' ')} "$(yes_no '[ -e "$HOME/.island/bin/island" ]')"`);
+    const r = await kind.exec(place, lines.join('\n') + '\n');
+    const last = r.out.trim().split('\n').pop() || '';
+    let parsed;
+    try { parsed = JSON.parse(last); } catch {
+      const why = (r.out + '\n' + r.err).match(/ISLAND-ERROR: (.*)/)?.[1] || r.err.trim().split('\n').pop() || 'no answer';
+      throw new Error(`${place.label}: ${why}`);
+    }
+    return {
+      agents: exts.map(e => ({ id: e.id, name: this.agentName(e), found: !!parsed.agents?.[e.id]?.found, connected: !!parsed.agents?.[e.id]?.connected })),
+      cli: !!parsed.cli,
+    };
+  }
 }
 
-module.exports = { status, connect, detectWsl, sshHosts, takeOverOldTunnelLines, windowsConnect, windowsConnected, repairWindows };
+module.exports = { Connections };

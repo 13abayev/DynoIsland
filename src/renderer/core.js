@@ -77,9 +77,6 @@ const clock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Mat
 const duration = ms => (ms < 3600e3 ? clock(ms) : `${Math.floor(ms / 3600e3)}h ${Math.floor((ms % 3600e3) / 60e3)}m`);
 
 const ICON = {
-  claude: '<svg viewBox="0 0 16 16"><path fill="var(--claude)" d="M8 1.2l1.1 4 3.8-1.7-2.5 3.3L14.6 8l-4.2.6 1.7 3.8-3.3-2.6L8 14.8l-.8-5-3.3 2.6 1.7-3.8L1.4 8l4.2-1.2-2.5-3.3 3.8 1.7z"/></svg>',
-  codex: '<svg viewBox="0 0 16 16" fill="none" stroke="var(--codex)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 12h4.5"/></svg>',
-  chatgpt: '<svg viewBox="0 0 16 16"><path fill="var(--gpt)" d="M2.5 4.2c0-1 .8-1.7 1.7-1.7h7.6c1 0 1.7.8 1.7 1.7v5.3c0 1-.8 1.7-1.7 1.7H7.2L4 13.6v-2.4h.2c-1 0-1.7-.8-1.7-1.7z"/></svg>',
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.5 3 3 6-7"/></svg>',
   clock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="5.6"/><path d="M8 5v3.2l2 1.3"/></svg>',
   close: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg>',
@@ -110,7 +107,37 @@ const batteryIcon = level =>
   '<svg class="bat-icon" viewBox="0 0 20 12"><rect x=".75" y=".75" width="16" height="10.5" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
   `<rect x="17.6" y="4" width="1.6" height="4" rx=".8" fill="currentColor"/><rect x="2.3" y="2.3" width="${(12.9 * Math.max(8, Math.min(100, level ?? 0))) / 100}" height="7.4" rx="1.3" fill="currentColor"/></svg>`;
 const BOLT = '<svg class="bolt" viewBox="0 0 10 14"><path fill="currentColor" d="M6 0 0 8h3.6L3 14l6-8H5.4z"/></svg>';
-const agentIcon = a => (a === 'codex' ? ICON.codex : a === 'chatgpt' ? ICON.chatgpt : ICON.claude);
+/** An agent's icon, in its color: both come from the extension that brings it (state.agents). */
+const agentIcon = a => {
+  const x = state.agents?.[a];
+  return `<span class="ag-icon" style="color:${esc(x?.color || 'var(--soft)')}">${x?.icon || ICON.spark}</span>`;
+};
+const agentName = a => state.agents?.[a]?.name || a || 'Session';
+
+/**
+ * An extension's own content, written as data (extensions.js): status lines, numbered steps and buttons. Its
+ * buttons carry data-ext-action, which settings and setup pass on to the extension (api.extensionAction).
+ */
+function extBlocks(extId, blocks = []) {
+  const text = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); // **bold**
+  const button = b => `<button class="btn${b.primary ? ' primary' : ''}" data-ext="${esc(extId)}" data-ext-action="${esc(b.action)}"` +
+    `${b.arg != null ? ` data-ext-arg="${esc(b.arg)}"` : ''}${b.title ? ` title="${esc(b.title)}"` : ''}>${esc(b.label)}</button>`;
+  return blocks.map(bl => {
+    if (bl.type === 'status') return `<div class="hint">${statusPill(bl.ok ? 'ok' : 'off', bl.ok ? 'Connected' : 'Not connected')} ${text(bl.text || '')}</div>`;
+    if (bl.type === 'steps') return '<ol class="steps setup-steps">' + bl.items.map(it =>
+      `<li>${text(it.text)}${(it.buttons || []).length ? `<div class="btns">${it.buttons.map(button).join('')}</div>` : ''}</li>`).join('') + '</ol>';
+    if (bl.type === 'buttons') return `<div class="btns">${bl.items.map(button).join('')}</div>`;
+    return `<div class="hint">${text(bl.text || '')}</div>`;
+  }).join('');
+}
+
+/** A button from an extension's own content was pressed: the extension does it (and may say a word back). */
+async function extAction(btn) {
+  const r = await api.extensionAction(btn.dataset.ext, btn.dataset.extAction, btn.dataset.extArg);
+  if (r?.note) showNote(r.note);
+  else if (r && !r.ok && r.error) showNote(r.error, 4000);
+  return r;
+}
 
 /** Tells you something in the closed island for a moment ("Copied", "Display 2", …). Set by island.js. */
 let showNote = () => {};
@@ -120,8 +147,8 @@ function demoApi() {
   const now = Date.now(), m = 60e3;
   const demo = {
     sessions: [
-      { key: 'a', agent: 'claude', src: 'wsl', distro: 'Ubuntu', project: 'web-shop', branch: 'feature/retry-payments', state: 'needs_you', ask: 'Wants to run: npm test -- --watch=false', prompt: 'Add retries to the payment client', since: now - 4 * m, updatedAt: now, waiting: true, canAnswer: true, permission: { tool: 'Bash', input: { command: 'npm test -- --watch=false' } } },
-      { key: 'q', agent: 'claude', src: 'ssh', host: 'gpu-server', project: 'ml-research', branch: 'main', state: 'needs_you', ask: 'Which checkpoint should I evaluate?', since: now - 2 * m, updatedAt: now, waiting: true, canAnswer: true, permission: { tool: 'AskUserQuestion', input: { questions: [{ question: 'Which checkpoint should I evaluate?', header: 'Checkpoint', multiSelect: false, options: [{ label: 'Step 40k', description: 'Lower loss' }, { label: 'Step 60k', description: 'Latest' }] }] } } },
+      { key: 'a', agent: 'claude', src: 'wsl', distro: 'Ubuntu', project: 'web-shop', branch: 'feature/retry-payments', state: 'needs_you', ask: 'Wants to run: npm test -- --watch=false', prompt: 'Add retries to the payment client', since: now - 4 * m, updatedAt: now, waiting: true, canAnswer: true, request: { kind: 'permission', title: 'Bash', detail: 'npm test -- --watch=false' } },
+      { key: 'q', agent: 'claude', src: 'ssh', host: 'gpu-server', project: 'ml-research', branch: 'main', state: 'needs_you', ask: 'Which checkpoint should I evaluate?', since: now - 2 * m, updatedAt: now, waiting: true, canAnswer: true, request: { kind: 'questions', questions: [{ question: 'Which checkpoint should I evaluate?', multiSelect: false, options: [{ label: 'Step 40k', description: 'Lower loss' }, { label: 'Step 60k', description: 'Latest' }] }] } },
       { key: 'b', agent: 'claude', src: 'ssh', host: 'gpu-server', project: 'model-training', branch: 'main', state: 'done', seen: false, summary: 'Training finished: WER 7.8% on dev, checkpoints saved to runs/0412.', prompt: 'Run the eval on the new checkpoint', since: now - 11 * m, updatedAt: now, waiting: true, canReply: true },
       { key: 'c', agent: 'chatgpt', src: 'web', project: 'Pricing ideas', state: 'done', seen: false, summary: 'Here are three pricing tiers based on team size…', prompt: 'Draft pricing tiers', since: now - 2 * m, updatedAt: now, waiting: true },
       { key: 'd', agent: 'codex', src: 'wsl', distro: 'Ubuntu', project: 'booking-app', branch: 'main', state: 'working', doing: 'Editing booking_flow.py', prompt: 'Handle double bookings', turnStartedAt: now - 3 * m, since: now - 20e3, updatedAt: now },
@@ -150,8 +177,8 @@ function demoApi() {
     timers: [{ id: 't1', label: 'Tea', minutes: 5, ends: now + 4 * m }],
     focus: null,
     jobs: [
-      { id: 'j1', name: 'train.py', src: 'ssh', host: 'gpu-server', state: 'running', started: now - 83 * m, heard: now, percent: 24, last: 'Epoch 12/50 | loss 0.412 | val_wer 9.1%', cmd: 'python train.py --config conf/base.yaml', cwd: '/home/you/research/ml-research' },
-      { id: 'j2', name: 'eval.sh', src: 'wsl', state: 'failed', exit: 1, started: now - 9 * m, ended: now - 2 * m, seen: false, cmd: 'bash eval.sh runs/0412', tail: ['Traceback (most recent call last):', '  File "eval.py", line 88, in <module>', 'FileNotFoundError: runs/0412/ckpt-40000.pt'] },
+      { id: 'j1', name: 'train.py', src: 'ssh', host: 'gpu-server', where: 'gpu-server', state: 'running', started: now - 83 * m, heard: now, percent: 24, last: 'Epoch 12/50 | loss 0.412 | val_wer 9.1%', cmd: 'python train.py --config conf/base.yaml', cwd: '/home/you/research/ml-research' },
+      { id: 'j2', name: 'eval.sh', src: 'wsl', where: 'WSL', state: 'failed', exit: 1, started: now - 9 * m, ended: now - 2 * m, seen: false, cmd: 'bash eval.sh runs/0412', tail: ['Traceback (most recent call last):', '  File "eval.py", line 88, in <module>', 'FileNotFoundError: runs/0412/ckpt-40000.pt'] },
     ],
     phone: { configured: true, paired: true, bot: 'my_island_bot', name: 'You' },
   };
@@ -161,13 +188,44 @@ function demoApi() {
   const fresh = /fresh/.test(location.search);
   Object.assign(demo.settings, { setupDone: !fresh, setupStep: '', setupSkipped: [] });
   if (fresh) Object.assign(demo, { ext: false, phone: { configured: false }, app: { ...demo.app, installed: false, canInstall: true } });
+  // what the extensions say about themselves (the real ones are in src/extensions)
+  const star = '<svg viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2l1.1 4 3.8-1.7-2.5 3.3L14.6 8l-4.2.6 1.7 3.8-3.3-2.6L8 14.8l-.8-5-3.3 2.6 1.7-3.8L1.4 8l4.2-1.2-2.5-3.3 3.8 1.7z"/></svg>';
+  demo.agents = {
+    claude: { name: 'Claude Code', color: '#d97757', icon: star },
+    codex: { name: 'Codex', color: '#b8b5ff', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 12h4.5"/></svg>' },
+    chatgpt: { name: 'ChatGPT', color: '#19c37d', icon: '<svg viewBox="0 0 16 16"><path fill="currentColor" d="M2.5 4.2c0-1 .8-1.7 1.7-1.7h7.6c1 0 1.7.8 1.7 1.7v5.3c0 1-.8 1.7-1.7 1.7H7.2L4 13.6v-2.4h.2c-1 0-1.7-.8-1.7-1.7z"/></svg>' },
+    'claude-web': { name: 'Claude', color: '#d97757', icon: star },
+  };
+  for (const x of demo.sessions) x.where = { wsl: 'WSL', ssh: x.host, web: x.agent === 'chatgpt' ? 'ChatGPT' : 'Claude' }[x.src] || 'Windows';
+  const browserSteps = [{ type: 'steps', items: [
+    { text: 'Open your browser\'s extensions page.', buttons: [{ label: 'Open Chrome\'s extensions', action: 'open-extensions', arg: 'chrome' }, { label: 'Open Edge\'s extensions', action: 'open-extensions', arg: 'edge' }] },
+    { text: 'Turn on **Developer mode**, choose **Load unpacked** and pick Island\'s extension folder.', buttons: [{ label: 'Copy folder path', action: 'copy-path' }, { label: 'Open folder', action: 'open-folder' }] },
+    { text: 'The extension asks Island to connect: press **Allow** in the island.' }] }];
+  const ext = (id, name, kind, description, agent, blocks = []) => ({ id, name, kind, description, version: '1.0.0', builtin: true, enabled: true, error: '', icon: demo.agents[agent]?.icon || '', color: demo.agents[agent]?.color || '', blocks });
+  demo.extensions = [
+    ext('browser', 'ChatGPT and Claude in the browser', 'agent', 'Chats on chatgpt.com and claude.ai in Chrome or Edge.', 'chatgpt',
+      demo.ext ? [{ type: 'status', ok: true, text: 'Connected: chats in your browser show up in the island' }] : [{ type: 'status', ok: false, text: 'Not connected yet' }, ...browserSteps]),
+    ext('claude-code', 'Claude Code', 'agent', 'Claude Code sessions in terminals, VS Code and the Claude app.', 'claude'),
+    ext('codex', 'Codex', 'agent', 'Codex sessions in WSL and on your servers.', 'codex'),
+    ext('ssh', 'SSH servers', 'place', 'Agents on the servers in your SSH config, through Island\'s own tunnel.'),
+    ext('windows', 'Windows', 'place', 'Agents on this PC.'),
+    ext('wsl', 'WSL', 'place', 'Agents in your WSL distro.'),
+  ];
+  demo.extSetups = [{ id: 'browser', title: 'ChatGPT and Claude in the browser', intro: 'Island\'s browser extension tells it when a chat is answering, done, or waits for you.', pairs: true, done: !!demo.ext, blocks: demo.ext ? [] : browserSteps }];
   demo.checks = [
     { id: 'tools', tab: 'sessions', state: fresh ? 'action' : 'ok', detail: fresh ? 'Nothing is connected yet' : '3 connected' },
     { id: 'browser', tab: 'sessions', state: demo.ext ? 'ok' : 'off' },
     { id: 'phone', tab: 'phone', state: fresh ? 'off' : 'ok' },
     { id: 'notifications', tab: 'alerts', state: fresh ? 'ok' : 'action', detail: fresh ? '' : 'Windows has notifications off for Island' },
   ];
-  const freshStatus = { windows: false, wslInstalled: true, distro: 'Ubuntu', wsl: { claude: false, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: false, tunnel: null }] };
+  const agentsAt = (claude, codex, found = [true, true]) => [{ id: 'claude-code', name: 'Claude Code', found: found[0], connected: claude }, { id: 'codex', name: 'Codex', found: found[1], connected: codex }];
+  const place = (id, kind, name, label, connected, agents, note = '') => ({ id, kind, name, label, os: kind === 'windows' ? 'windows' : 'linux', connected, agents, note, down: false, error: '' });
+  const demoStatus = () => ({ places: [
+    place('windows', 'windows', 'Windows', 'This PC', !fresh, agentsAt(!fresh, false, [true, false])),
+    place('wsl', 'wsl', 'WSL', 'Ubuntu (WSL)', !fresh, agentsAt(!fresh, false)),
+    place('ssh:gpu-server', 'ssh', 'Servers', 'gpu-server', !fresh, fresh ? [] : agentsAt(true, false), fresh ? '' : 'Tunnel open: its sessions show up here'),
+    place('ssh:build-box', 'ssh', 'Servers', 'build-box', false, []),
+  ] });
   const demoShelf = [
     { id: 's1', path: 'C:\\Users\\you\\Downloads\\From phone\\photo-2026-10-30.jpg', name: 'photo-2026-10-30.jpg', size: 2480000, at: now - 3 * m, from: 'phone', icon: '' },
     { id: 's2', path: 'C:\\Users\\you\\Datasets\\dev-clean.tar.gz', name: 'dev-clean.tar.gz', size: 337000000, at: now - 20 * m, from: 'pc', icon: '', send: { to: 'gpu-server:~/data', state: 'sending', at: now - 40e3 } },
@@ -187,19 +245,18 @@ function demoApi() {
     { id: '2', n: 2, name: 'External monitor', size: '1920×1080', where: 'right of the main one', shown: false },
   ];
   const known = {
-    connectStatus: async () => ({ windows: false, wslInstalled: true, distro: 'Ubuntu', wsl: { claude: true, codex: false }, helper: true, ssh: [{ alias: 'gpu-server', connected: true, tunnel: { state: 'open' } }, { alias: 'gpu-box', connected: false, tunnel: null }] }),
-    connect: async (target, on, arg) => {
+    connectStatus: async () => demoStatus(),
+    connect: async id => {
       await new Promise(r => setTimeout(r, 700));
-      return target === 'ssh' ? { ok: false, error: `Could not log in to ${arg} without a password. Connect once from VS Code or a terminal, then try again.` } : { ok: true };
+      const alias = id.slice(4);
+      return id.startsWith('ssh:') ? { ok: false, error: `Could not log in to ${alias} without a password. Connect once from VS Code or a terminal, or set up key login.`, fix: { ext: 'ssh', action: 'key-login', arg: alias, label: 'Set up key login' }, status: demoStatus() } : { ok: true, status: demoStatus() };
     },
+    extensionEnable: async (id, on) => { const e = demo.extensions.find(x => x.id === id); if (e) e.enabled = on; fire('state', demo); return { ok: true, status: demoStatus() }; },
+    extensionAction: async () => ({ ok: true, note: 'Demo mode' }),
     setSettings: async p => { Object.assign(demo.settings, p); fire('state', demo); return demo.settings; },
     detect: async () => {
       await new Promise(r => setTimeout(r, 600));
-      return {
-        claudeWindows: true, wsl: { installed: true, distros: ['Ubuntu'], default: 'Ubuntu' }, inWsl: { claude: true, codex: false },
-        status: fresh ? freshStatus : await known.connectStatus(), claudeIn: 'win', browsers: ['chrome', 'edge'],
-        extensionDir: 'C:\\Users\\you\\AppData\\Local\\Programs\\Island\\resources\\app\\extension',
-      };
+      return { status: demoStatus(), claudeIn: 'win' };
     },
     install: async () => ({ ok: false, error: 'Demo mode' }),
     launcherQuick: async q => {

@@ -18,10 +18,11 @@ async function readNotifications() {
 }
 
 /**
- * The list. conn: the last connection status settings or setup asked for (null: not asked yet; WSL is not started
- * just for this), wslInstalled: whether WSL is there at all.
+ * The list. connected: how many places have an agent connected, plus add-ons that are connected (the browser's);
+ * unknown: maybe more, not known until settings asks (WSL is not started just for this); setups: the extensions
+ * with a setup step of their own ({ id, title, done }).
  */
-function list({ settings, windowsConnected, conn, wslInstalled, ext, phone, helper, hotkeysTaken }) {
+function list({ settings, connected, unknown, setups = [], phone, helper, hotkeysTaken }) {
   const skipped = new Set(settings.setupSkipped || []);
   const out = [];
   const add = (id, tab, title, state, detail = '') => out.push({ id, tab, title, state, detail });
@@ -29,11 +30,9 @@ function list({ settings, windowsConnected, conn, wslInstalled, ext, phone, help
   const helperOk = helper.running || Date.now() - helper.startedAt < 20 * 1000; // it takes a moment to start
   add('helper', 'general', 'Island\'s Windows helper', helperOk ? 'ok' : 'error', helperOk ? '' : 'It is not running, so media, the clipboard and pasting do not work. Restart Island.');
 
-  const tools = [windowsConnected, conn?.wsl?.claude, conn?.wsl?.codex, (settings.sshServers || []).length > 0, ext].filter(Boolean).length;
-  const unknown = !tools && wslInstalled && !conn; // maybe connected in WSL: not known until settings asks
-  add('tools', 'sessions', 'Your AI tools', tools ? 'ok' : unknown ? 'info' : 'action', tools ? `${tools} connected` : unknown ? '' : 'Nothing is connected yet');
-
-  add('browser', 'sessions', 'ChatGPT and Claude in the browser', ext ? 'ok' : skipped.has('browser') ? 'action' : 'off');
+  add('tools', 'sessions', 'Your AI tools', connected ? 'ok' : unknown ? 'info' : 'action', connected ? `${connected} connected` : unknown ? '' : 'Nothing is connected yet');
+  // an extension's own setup step (the browser add-on): skipped in setup → a dot until it is done
+  for (const x of setups) add(x.id, 'sessions', x.title, x.done ? 'ok' : skipped.has(x.id) ? 'action' : 'off');
   add('phone', 'phone', 'Your phone', phone.error ? 'error' : phone.paired ? 'ok' : skipped.has('phone') ? 'action' : 'off', phone.error || '');
   add('notifications', 'alerts', 'Windows notifications', !settings.toasts ? 'off' : notificationsOn ? 'ok' : 'action',
     notificationsOn ? '' : 'Windows has notifications off for Island');

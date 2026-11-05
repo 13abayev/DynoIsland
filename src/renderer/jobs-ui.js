@@ -7,7 +7,7 @@ const jobOpen = new Set(); // jobs whose details you opened
 let seenAsked = false;
 
 const jobs = () => state.jobs || [];
-const jobWhere = j => (j.src === 'ssh' ? j.host || 'SSH' : j.src === 'wsl' ? 'WSL' : 'PC');
+const jobWhere = j => j.where || 'PC'; // where it runs, as its place extension says
 const ended = j => j.state === 'done' || j.state === 'failed';
 
 /** About how long is left, from how fast it went so far. */
@@ -27,7 +27,7 @@ function jobRow(j) {
   const pct = j.percent != null && j.state !== 'done' ? `<span class="job-pct">${Math.round(j.percent)}%</span>` : '';
   let line = j.last || '';
   if (j.state === 'quiet') line = `No news since ${when(j.heard)}: its machine or connection may be asleep`;
-  else if (j.state === 'done') line = `Finished${j.host && j.src === 'ssh' ? ' on ' + j.host : ''} · ${when(j.ended)}`;
+  else if (j.state === 'done') line = `Finished${j.where && j.where !== 'Windows' ? ' on ' + j.where : ''} · ${when(j.ended)}`;
   else if (j.state === 'failed') line = `Failed with exit code ${j.exit} · ${when(j.ended)}`;
   const left = jobLeft(j);
   const bar = j.state === 'running' || j.state === 'quiet'

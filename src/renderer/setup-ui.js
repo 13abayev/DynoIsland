@@ -1,21 +1,17 @@
 'use strict';
 // Setup, in the island. The first start walks you through what Island needs: installing it (when it runs from the
-// zip), your AI tools, the browser extension, where Claude Code runs for quick tasks, your phone, and Windows.
-// Whatever you skip keeps a dot on its settings tab until it is done (checks.js), and settings → General → Run setup
-// again starts it over. Also here: allowing a browser extension that asks to connect (the card above any page).
+// zip), the places your agents run (this PC, WSL, your servers), the extensions that have a step of their own (the
+// browser add-on), where Claude Code runs for quick tasks, your phone, and Windows. Whatever you skip keeps a dot on its
+// settings tab until it is done (checks.js), and settings → General → Run setup again starts it over. Also here:
+// allowing a browser extension that asks to connect (the card above any page).
 
-const SETUP_STEPS = [
-  { id: 'welcome' },
-  { id: 'tools', title: 'Your AI tools' },
-  { id: 'browser', title: 'ChatGPT and Claude in the browser', when: () => setup.picked.has('browser') || state.settings?.setupStep === 'browser' },
-  { id: 'claude', title: 'Claude Code for quick tasks' },
-  { id: 'phone', title: 'Your phone' },
-  { id: 'windows', title: 'Windows' },
-  { id: 'done', title: 'All set' },
+// the steps; after "tools" comes one per extension with a setup step of its own (state.extSetups)
+const setupSteps = () => [
+  { id: 'welcome' }, { id: 'tools' },
+  ...(state.extSetups || []).map(x => ({ id: 'ext:' + x.id, ext: x.id })),
+  { id: 'claude' }, { id: 'phone' }, { id: 'windows' }, { id: 'done' },
 ];
-const setup = { step: 'welcome', found: null, finding: false, picked: new Set(), results: {}, busy: '', installing: false, error: '' };
-
-const setupSteps = () => SETUP_STEPS.filter(s => !s.when || s.when());
+const setup = { step: 'welcome', found: null, finding: false, picked: new Set(), results: {}, fixes: {}, busy: '', installing: false, error: '' };
 const stepIndex = () => Math.max(0, setupSteps().findIndex(s => s.id === setup.step));
 
 function setupProgress() {
@@ -37,8 +33,8 @@ const finding = () => '<div class="hint"><span class="spin"></span> Looking at w
 // ---------- the steps ----------
 function welcomeStep() {
   const a = state.app || {};
-  let h = '<div class="setup-hello"><div class="setup-title big">Welcome to Island</div><div class="hint">Your AI sessions in one place: Claude Code, Codex, ' +
-    'ChatGPT and Claude, with reminders when one needs you. Setup takes a minute; anything you skip can be done later in settings.</div></div>';
+  let h = '<div class="setup-hello"><div class="setup-title big">Welcome to Island</div><div class="hint">Your AI sessions in one place, ' +
+    'with reminders when one needs you. Setup takes a minute; anything you skip can be done later in settings.</div></div>';
   if (a.canInstall) {
     h += `<div class="setup-card">${settingRow('Install Island', 'Into your user folder (no admin rights needed), with a Start menu entry. Settings → Apps can remove it again.' +
       (a.installedVersion ? ` It replaces Island ${esc(a.installedVersion)}, which is installed now.` : ''), '')}</div>`;
@@ -48,63 +44,49 @@ function welcomeStep() {
   return h + setupNav({ next: 'Start' });
 }
 
-function pickRow(key, name, desc, { connected = false, found = true } = {}) {
-  const r = setup.results[key];
+/** A place to connect: the agents found there, and a switch (or how it went). */
+function pickRow(p) {
+  const r = setup.results[p.id], fix = setup.fixes[p.id];
+  const found = (p.agents || []).filter(a => a.found);
   let right;
-  if (setup.busy === key) right = statusPill('busy', 'Connecting…');
-  else if (connected || r === 'ok') right = statusPill('ok', 'Connected');
-  else if (!found) right = statusPill('off', 'Not found');
-  else right = `<input type="checkbox" class="switch" data-pick="${esc(key)}"${setup.picked.has(key) ? ' checked' : ''}${setup.busy ? ' disabled' : ''}>`;
-  let h = settingRow(esc(name), desc, right);
+  if (setup.busy === p.id) right = statusPill('busy', 'Connecting…');
+  else if (p.connected || r === 'ok') right = statusPill('ok', 'Connected');
+  else if (!found.length && p.kind !== 'ssh') right = statusPill('off', 'Nothing found');
+  else right = `<input type="checkbox" class="switch" data-place-pick="${esc(p.id)}"${setup.picked.has(p.id) ? ' checked' : ''}${setup.busy ? ' disabled' : ''}>`;
+  const desc = found.length ? found.map(a => esc(a.name)).join(' · ') : p.kind === 'ssh' ? 'Island installs its hooks there and keeps a tunnel open' : '';
+  let h = settingRow(esc(p.label), desc, right);
   if (r && r !== 'ok') {
     h += `<div class="error">${esc(r)}</div>`;
-    if (key.startsWith('ssh:') && /without a password/.test(r)) {
-      h += `<div class="btns"><button class="btn" data-keylogin="${esc(key.slice(4))}">Set up key login</button>` +
-        '<span class="hint-inline">A terminal opens; type the server\'s password there once.</span></div>';
-    }
+    if (fix) h += `<div class="btns"><button class="btn" data-ext="${esc(fix.ext)}" data-ext-action="${esc(fix.action)}" data-ext-arg="${esc(fix.arg)}">${esc(fix.label)}</button>` +
+      '<span class="hint-inline">Then press Try again.</span></div>';
   }
   return h;
 }
 
 function toolsStep() {
   const f = setup.found;
-  let h = head('Your AI tools', 'Island shows a session the moment it needs you or is done. Pick what to connect: Island adds a small hook to each, and Disconnect (settings → Sessions) takes it out again.');
+  let h = head('Your AI tools', 'Island shows a session the moment it needs you or is done. Pick where your agents run: Island adds a small hook to each agent there, and Disconnect (settings → Sessions) takes it out again.');
   if (!f) return h + finding() + setupNav({ disabled: true });
-  const c = f.status || {};
-  let rows = pickRow('windows', 'Claude Code on Windows', 'Terminals, VS Code, and the Code tab of the Claude app', { connected: c.windows, found: f.claudeWindows });
-  if (f.wsl?.installed) {
-    const where = `In WSL (${esc(f.wsl.default)})`;
-    rows += pickRow('wsl-claude', 'Claude Code in WSL', where, { connected: c.wsl?.claude, found: !!f.inWsl?.claude });
-    rows += pickRow('wsl-codex', 'Codex in WSL', where, { connected: c.wsl?.codex, found: !!f.inWsl?.codex });
+  const places = f.status?.places || [], here = places.filter(p => p.kind !== 'ssh'), servers = places.filter(p => p.kind === 'ssh');
+  h += settingSection('On this PC', here.map(pickRow).join(''));
+  if (servers.length) h += settingSection('Servers', servers.map(pickRow).join(''));
+  if (!here.some(p => p.agents.some(a => a.found))) {
+    h += '<div class="hint">No agent was found on this PC. Install one (Claude Code, Codex, OpenCode…), then connect it here or in settings → Sessions.</div>';
   }
-  rows += pickRow('browser', 'ChatGPT and Claude in the browser', 'Chrome or Edge: the next step shows how', { connected: state.ext });
-  h += settingSection('On this PC', rows);
-  if ((c.ssh || []).length) {
-    h += settingSection('Servers', '<div class="hint">From your SSH config. Island installs its hook there and keeps a tunnel open.</div>' +
-      c.ssh.map(s => pickRow('ssh:' + s.alias, s.alias, '', { connected: s.connected })).join(''));
-  }
-  if (!f.claudeWindows && !f.inWsl?.claude && !f.inWsl?.codex) {
-    h += '<div class="hint">No Claude Code or Codex was found on this PC. Install one, then connect it here or in settings → Sessions.</div>';
-  }
-  const toConnect = [...setup.picked].filter(k => k !== 'browser' && setup.results[k] !== 'ok');
-  if (toConnect.some(k => !setup.results[k])) return h + setupNav({ next: 'Connect', nextCmd: 'connect' });
+  const toConnect = [...setup.picked].filter(id => setup.results[id] !== 'ok');
+  if (toConnect.some(id => !setup.results[id])) return h + setupNav({ next: 'Connect', nextCmd: 'connect' });
   // the ones that did not work can be tried again (after Set up key login), or left for later
   return h + setupNav(toConnect.length ? { extra: '<button class="btn" data-setup="connect">Try again</button>' } : {});
 }
 
-function browserStep() {
-  const f = setup.found || {};
-  let h = head('ChatGPT and Claude in the browser', 'Island\'s extension tells it when a chat is answering, done, or waits for you.');
-  h += settingRow('Island extension', '', state.ext ? statusPill('ok', 'Connected') : '<span class="hint-inline"><span class="spin"></span> Waiting for it…</span>');
-  if (!state.ext) {
-    const open = (f.browsers || []).map(b => `<button class="btn" data-extpage="${b}">Open ${b === 'edge' ? 'Edge' : 'Chrome'}'s extensions</button>`).join('');
-    h += '<ol class="steps setup-steps">' +
-      `<li>Open your browser's extensions page${open ? '' : ' (chrome://extensions or edge://extensions)'}.${open ? `<div class="btns">${open}</div>` : ''}</li>` +
-      '<li>Turn on <b>Developer mode</b>, choose <b>Load unpacked</b> and pick Island\'s extension folder (paste its path into the folder window).' +
-      '<div class="btns"><button class="btn" data-cmd="copy-ext-path">Copy folder path</button><button class="btn" data-cmd="ext-folder">Open folder</button></div></li>' +
-      '<li>That is all: the extension connects to Island by itself.</li></ol>';
-  }
-  return h + setupNav(state.ext ? {} : { next: '', skip: true });
+/** An extension's own step (the browser add-on's): its content, and whether it is done. */
+function extStep(id) {
+  const x = (state.extSetups || []).find(e => e.id === id);
+  if (!x) return head('This extension is off', '') + setupNav();
+  let h = head(esc(x.title), esc(x.intro || ''));
+  h += settingRow('Status', '', x.done ? statusPill('ok', 'Connected') : '<span class="hint-inline"><span class="spin"></span> Waiting for it…</span>');
+  h += extBlocks(id, x.blocks || []);
+  return h + setupNav(x.done ? {} : { next: '', skip: true });
 }
 
 function claudeStep() {
@@ -145,12 +127,14 @@ function doneStep() {
   };
   let h = '<div class="setup-hello"><div class="setup-title big">Island is ready</div><div class="hint">Press <kbd>Ctrl+Alt+Space</kbd> any time to open it. ' +
     'Anything still open below has a dot on its settings tab.</div></div>';
-  h += settingSection('Your setup', row('tools', 'Your AI tools', 'sessions', 'Connected') + row('browser', 'ChatGPT and Claude in the browser', 'sessions', 'Connected') +
+  h += settingSection('Your setup', row('tools', 'Your AI tools', 'sessions', 'Connected') +
+    (state.extSetups || []).map(x => row(x.id, x.title, 'sessions', 'Connected')).join('') +
     row('phone', 'Your phone', 'phone', 'Paired') + row('notifications', 'Windows notifications', 'alerts', 'On'));
   return h + setupNav({ next: 'Finish', nextCmd: 'finish' });
 }
 
-const STEP_VIEWS = { welcome: welcomeStep, tools: toolsStep, browser: browserStep, claude: claudeStep, phone: phoneStep, windows: windowsStep, done: doneStep };
+const STEP_VIEWS = { welcome: welcomeStep, tools: toolsStep, claude: claudeStep, phone: phoneStep, windows: windowsStep, done: doneStep };
+const stepView = id => (id.startsWith('ext:') ? () => extStep(id.slice(4)) : STEP_VIEWS[id] || welcomeStep);
 
 // ---------- moving between steps ----------
 async function findThings(fresh = false) {
@@ -159,24 +143,24 @@ async function findThings(fresh = false) {
   try {
     setup.found = await api.detect();
     conn = setup.found.status; // settings shares it (and translate's choice of where Claude runs)
-    const c = setup.found.status || {};
-    if (!setup.picked.size) { // first look: tick what is there and not connected yet
-      if (setup.found.claudeWindows && !c.windows) setup.picked.add('windows');
-      if (setup.found.inWsl?.claude && !c.wsl?.claude) setup.picked.add('wsl-claude');
-      if (setup.found.inWsl?.codex && !c.wsl?.codex) setup.picked.add('wsl-codex');
+    if (!setup.picked.size) { // first look: tick the places on this PC that have an agent and are not connected yet
+      for (const p of setup.found.status?.places || []) if (p.kind !== 'ssh' && !p.connected && p.agents.some(a => a.found)) setup.picked.add(p.id);
     }
   } catch (e) { setup.error = e.message; }
   setup.finding = false;
   if (open && view === 'setup') render();
 }
 
+/** An extension's step that lets its add-on in without asking you while it shows (the browser add-on's). */
+const pairsAt = id => id.startsWith('ext:') && (state.extSetups || []).some(x => 'ext:' + x.id === id && x.pairs);
+
 function goStep(id) {
-  if (setup.step === 'browser' && id !== 'browser') api.extPairing(false);
+  if (pairsAt(setup.step) && id !== setup.step) api.extPairing(false);
   setup.step = id;
   setup.error = '';
   body.scrollTop = 0;
   if (['tools', 'claude', 'done'].includes(id)) findThings();
-  if (id === 'browser') api.extPairing(true); // the extension that asks now gets in without asking you
+  if (pairsAt(id)) api.extPairing(true); // the add-on that asks now gets in without asking you
   if (id === 'windows') {
     api.displays().then(d => { displays = d; render(); }).catch(() => {});
     if (!state.settings?.setupDone && !state.settings?.startWithWindows && !setup.startOffered) { setup.startOffered = true; api.setSettings({ startWithWindows: true }); }
@@ -192,18 +176,18 @@ function moveBy(delta) {
 
 function skipStep() {
   const skipped = new Set(state.settings?.setupSkipped || []);
-  skipped.add(setup.step);
+  skipped.add(setup.step.replace(/^ext:/, '')); // an extension's step is remembered by its id (checks.js)
   api.setSettings({ setupSkipped: [...skipped] });
   moveBy(1);
 }
 
 async function connectPicked() {
-  for (const key of [...setup.picked].filter(k => k !== 'browser' && setup.results[k] !== 'ok')) {
-    setup.busy = key;
+  for (const id of [...setup.picked].filter(k => setup.results[k] !== 'ok')) {
+    setup.busy = id;
     render();
-    const [target, arg] = key.startsWith('ssh:') ? ['ssh', key.slice(4)] : [key, ''];
-    const r = await api.connect(target, true, arg);
-    setup.results[key] = r.ok ? 'ok' : r.error || 'That did not work.';
+    const r = await api.connect(id, true);
+    setup.results[id] = r.ok ? 'ok' : r.error || 'That did not work.';
+    setup.fixes[id] = r.fix || null; // what the place offers to fix it (key login to a server)
     if (r.status) setup.found.status = conn = r.status;
   }
   setup.busy = '';
@@ -222,10 +206,10 @@ async function installIsland() {
 ui.pages.setup = {
   label: 'Setup', title: 'Setup', tab: false, bare: true, sticky: true,
   tabs: setupProgress,
-  render: () => (STEP_VIEWS[setup.step] || welcomeStep)(),
+  render: () => stepView(setup.step)(),
   opened(arg) {
-    const saved = state.settings?.setupStep;
-    const start = SETUP_STEPS.some(s => s.id === arg) ? arg : state.app?.canInstall ? 'welcome' : SETUP_STEPS.some(s => s.id === saved) ? saved : 'welcome';
+    const saved = state.settings?.setupStep, known = id => setupSteps().some(s => s.id === id);
+    const start = known(arg) ? arg : state.app?.canInstall ? 'welcome' : known(saved) ? saved : 'welcome';
     goStep(start);
   },
   async click(e) {
@@ -242,19 +226,21 @@ ui.pages.setup = {
       go('sessions');
       return true;
     }
-    const keyLogin = t.closest('[data-keylogin]')?.dataset.keylogin;
-    if (keyLogin) { api.sshKeyLogin(keyLogin); delete setup.results['ssh:' + keyLogin]; return true; }
-    const page = t.closest('[data-extpage]')?.dataset.extpage;
-    if (page) { api.openExtensions(page); return true; }
+    const extBtn = t.closest('[data-ext-action]'); // an extension's own button (key login, open the extensions page…)
+    if (extBtn) {
+      await extAction(extBtn);
+      for (const [id, fix] of Object.entries(setup.fixes)) if (fix?.action === extBtn.dataset.extAction) delete setup.results[id];
+      render();
+      return true;
+    }
     const c = t.closest('[data-cmd]')?.dataset.cmd;
-    if (c === 'copy-ext-path') { await api.copyText(setup.found?.extensionDir || ''); showNote('Folder path copied'); return true; }
     if (c === 'win-notifications') { api.openNotificationSettings(); return true; }
     const answer = t.closest('[data-ext-answer]')?.dataset.extAnswer;
     if (answer) { api.answerExtension(answer === 'yes'); return true; }
     return false;
   },
   change(e) {
-    const key = e.target.dataset?.pick;
+    const key = e.target.dataset?.placePick;
     if (key) {
       if (e.target.checked) setup.picked.add(key); else setup.picked.delete(key);
       render();

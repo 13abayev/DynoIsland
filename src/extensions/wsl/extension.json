@@ -1,0 +1,6 @@
+{
+  "id": "wsl",
+  "name": "WSL",
+  "version": "1.0.0",
+  "description": "Agents in your WSL distro: Island's Linux kit goes into ~/.island there, and reaches Island through Windows' own curl.exe."
+}

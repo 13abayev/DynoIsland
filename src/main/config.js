@@ -29,6 +29,7 @@ const DEFAULTS = {
   translateAlt: '', // …or into this one when the text is already in the first (empty: none)
   claudeIn: 'auto', // where translations run Claude Code: 'auto' (Windows, else WSL), 'windows', 'wsl' or a server's alias
   checkUpdates: true, // look for a newer Island on GitHub once a day (install.js)
+  extensionsOn: {}, // extensions you switched on or off (id → true/false); built-in ones are on, yours off, until then
   launcherKey: 'Alt+Space', // opens Spotlight in the island (launcher.js)
   launcherFiles: true, // Spotlight also finds files and folders
   searchFolders: [], // folders Spotlight searches itself (Windows Search does not index them): your projects

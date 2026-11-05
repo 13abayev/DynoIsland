@@ -20,7 +20,10 @@ contextBridge.exposeInMainWorld('islandApi', {
   act: (key, action, arg) => ipcRenderer.invoke('act', key, action, arg),
   menu: () => ipcRenderer.send('menu'),
   connectStatus: () => ipcRenderer.invoke('connect:status'),
-  connect: (target, on, arg) => ipcRenderer.invoke('connect:run', target, on, arg),
+  connect: (placeId, on) => ipcRenderer.invoke('connect:run', placeId, on),
+  // extensions: on or off, and the buttons in their own content
+  extensionEnable: (id, on) => ipcRenderer.invoke('extensions:enable', id, !!on),
+  extensionAction: (id, name, arg) => ipcRenderer.invoke('extensions:action', id, name, arg),
   setSettings: patch => ipcRenderer.invoke('settings:set', patch),
   refreshLimits: () => ipcRenderer.invoke('limits:refresh'),
   answer: (key, choice) => ipcRenderer.invoke('answer', key, choice),
@@ -76,8 +79,6 @@ contextBridge.exposeInMainWorld('islandApi', {
   focusStart: min => ipcRenderer.invoke('focus:start', min),
   focusStop: () => ipcRenderer.invoke('focus:stop'),
   onTranslation: on('translation'),
-  copyToken: () => ipcRenderer.invoke('copy-token'),
-  openExtensionFolder: () => ipcRenderer.invoke('open-extension-folder'),
   // Island itself: installing it (from the zip), uninstalling it, updates
   install: () => ipcRenderer.invoke('app:install'),
   uninstall: () => ipcRenderer.invoke('app:uninstall'),
@@ -93,8 +94,6 @@ contextBridge.exposeInMainWorld('islandApi', {
   // setup
   detect: () => ipcRenderer.invoke('setup:detect'),
   extPairing: on => ipcRenderer.invoke('setup:ext-pairing', !!on),
-  openExtensions: browser => ipcRenderer.invoke('setup:open-extensions', browser),
   answerExtension: yes => ipcRenderer.invoke('ext:pair-answer', !!yes),
-  sshKeyLogin: alias => ipcRenderer.invoke('ssh:key-login', alias),
   openNotificationSettings: () => ipcRenderer.invoke('open-windows-settings'),
 });

@@ -4,7 +4,7 @@
 // sections about Island itself, your connections and your reminders.
 
 const SETTINGS_TABS = [['general', 'General'], ['sessions', 'Sessions'], ['alerts', 'Alerts'], ['phone', 'Phone'], ['tools', 'Tools'], ['devices', 'Devices']];
-let settingsTab = 'general', conn = null, connBusy = '', connError = '', displays = null, updateNote = '';
+let settingsTab = 'general', conn = null, connBusy = '', connError = '', connFix = null, extBusy = false, displays = null, updateNote = '';
 
 /** A tab gets a dot when something on it needs you (a check from checks.js that is not ok). */
 const needsYou = tab => (state.checks || []).some(c => c.tab === tab && (c.state === 'action' || c.state === 'error'));
@@ -50,51 +50,56 @@ function aboutSection() {
 }
 
 // ---------- Sessions ----------
-/** A connection: what it is, whether it is on, and its buttons (Connect, or Update and Disconnect). */
-function connRow(target, name, desc, on, { arg = '', down = false } = {}) {
-  const busy = connBusy === target + arg, dis = connBusy ? ' disabled' : '';
+/**
+ * A place your agents run (from the place extensions): which agents are there, and its buttons. Connect puts every
+ * agent extension that is on and found there into it; Update does it again (Island's newest hooks).
+ */
+function placeRow(p) {
+  const busy = connBusy === p.id, dis = connBusy ? ' disabled' : '';
   const btn = (label, yes, cls = '', title = '') =>
-    `<button class="btn${cls}" data-conn="${target}" data-on="${yes ? 1 : 0}" data-arg="${esc(arg)}"${title ? ` title="${esc(title)}"` : ''}${dis}>${label}</button>`;
-  const pill = busy ? statusPill('busy', 'Working…') : down ? statusPill('error', 'No answer') : on ? statusPill('ok', 'Connected') : '';
-  const buttons = busy || down ? '' : on
+    `<button class="btn${cls}" data-place="${esc(p.id)}" data-on="${yes ? 1 : 0}"${title ? ` title="${esc(title)}"` : ''}${dis}>${label}</button>`;
+  const pill = busy ? statusPill('busy', 'Working…') : p.down ? statusPill('error', 'No answer') : p.connected ? statusPill('ok', 'Connected') : '';
+  const buttons = busy || p.down ? '' : p.connected
     ? btn('Update', true, '', 'Install Island\'s newest hooks there (after Island itself was updated)') + btn('Disconnect', false)
     : btn('Connect', true, ' primary');
-  return settingRow(esc(name), desc, `${pill}${buttons}`);
+  // "Claude Code ✓ · Codex ✓ · OpenCode –": connected, found but not connected, not there
+  const agents = (p.agents || []).filter(a => a.found || a.connected)
+    .map(a => `${esc(a.name)} ${a.connected ? '✓' : '–'}`).join(' · ');
+  const desc = p.down ? esc(p.error) : [agents, p.note && esc(p.note)].filter(Boolean).join(' · ') || (p.connected || p.asked === false ? '' : 'Nothing found there yet');
+  return settingRow(`${esc(p.label)}${p.kind === 'ssh' ? '' : ` <span class="hint-inline">${esc(p.name)}</span>`}`, desc, `${pill}${buttons}`);
 }
 
-function browserRow() {
-  const on = !!state.ext;
-  let h = settingRow('ChatGPT and Claude in the browser', 'Chrome or Edge, with Island\'s extension', on ? statusPill('ok', 'Connected') : '');
-  if (!on) h += '<div class="setup-box"><ol class="steps"><li>Open <b>chrome://extensions</b> (or edge://extensions) and turn on <b>Developer mode</b>.</li>' +
-    '<li>Choose <b>Load unpacked</b> and pick Island\'s extension folder (paste its path into the folder window).</li>' +
-    '<li>The extension asks Island to connect: press <b>Allow</b> in the island.</li></ol>' +
-    '<div class="btns"><button class="btn" data-cmd="copy-ext-path">Copy folder path</button><button class="btn" data-cmd="ext-folder">Open folder</button>' +
-    '<button class="btn" data-cmd="copy-token" title="For the extension\'s popup, if it cannot ask Island itself">Copy token</button></div></div>';
-  return h;
-}
-
-function toolsSection() {
+function placesSection() {
   const c = conn;
   let h = connError ? `<div class="error">${esc(connError)}</div>` : '';
-  if (!c) return settingSection('Your AI tools', h + '<div class="hint">Checking what is connected…</div>');
-  if (!c.helper) h += `<div class="error">${esc(c.helperMissing)}</div>`;
-  h += connRow('windows', 'Claude Code on Windows', 'Terminals, VS Code, and the Code tab of the Claude app', c.windows);
-  if (c.wslInstalled) { // a PC without WSL does not get these rows
-    const where = `Your ${esc(c.distro || 'WSL')} projects`;
-    h += connRow('wsl-claude', 'Claude Code in WSL', c.wsl ? where : 'WSL did not answer', c.wsl?.claude, { down: !c.wsl });
-    h += connRow('wsl-codex', 'Codex in WSL', c.wsl ? where : '', c.wsl?.codex, { down: !c.wsl });
+  if (connFix) h += `<div class="btns"><button class="btn" data-ext="${esc(connFix.ext)}" data-ext-action="${esc(connFix.action)}" data-ext-arg="${esc(connFix.arg)}">${esc(connFix.label)}</button></div>`;
+  if (!c) return settingSection('Where your agents run', h + '<div class="hint">Checking what is connected…</div>');
+  for (const p of c.places) if (p.missing) h += `<div class="error">${esc(p.missing)}</div>`;
+  const local = c.places.filter(p => p.kind !== 'ssh'), servers = c.places.filter(p => p.kind === 'ssh');
+  h += local.map(placeRow).join('');
+  let s = settingSection('Where your agents run', h);
+  if (c.places.some(p => p.kind === 'ssh') || state.extensions?.some(e => e.id === 'ssh' && e.enabled)) {
+    s += settingSection('Servers', '<div class="hint">From your SSH config. Connect adds Island\'s hooks there and keeps a tunnel open, so their sessions show up here.</div>' +
+      (servers.length ? servers.map(placeRow).join('') : '<div class="hint">No servers in your SSH config (.ssh\\config in your user folder).</div>'));
   }
-  return settingSection('Your AI tools', h + browserRow());
+  return s;
 }
 
-function serversSection() {
-  const c = conn;
-  if (!c) return '';
-  const tunnel = t => !t ? 'Not connected' : t.state === 'open' ? 'Tunnel open: its sessions show up here'
-    : t.state === 'connecting' ? 'Opening the tunnel…' : `Tunnel closed (${esc(t.error)}), trying again`;
-  const rows = c.ssh.length ? c.ssh.map(x => connRow('ssh', x.alias, x.connected ? tunnel(x.tunnel) : '', x.connected, { arg: x.alias })).join('')
-    : '<div class="hint">No servers in your SSH config (.ssh\\config in your user folder).</div>';
-  return settingSection('Servers', '<div class="hint">From your SSH config. Connect adds Island\'s hook there and keeps a tunnel open, so their sessions show up here.</div>' + rows);
+/** Every extension: its switch and its own content (the browser add-on's steps). Built-in ones, and yours. */
+function extensionsSection() {
+  const list = state.extensions || [];
+  const card = e => {
+    const icon = e.icon ? `<span class="ag-icon" style="color:${esc(e.color || 'var(--soft)')}">${e.icon}</span>` : ICON.spark;
+    const sub = [e.kind, e.builtin ? 'built in' : `yours · ${e.version || ''}`].filter(Boolean).join(' · ');
+    let h = `<div class="ext-card${e.enabled ? '' : ' off'}"><div class="opt"><span class="ext-icon">${icon}</span>` +
+      `<div class="what"><div>${esc(e.name)} <span class="hint-inline">${esc(sub)}</span></div><div>${esc(e.description)}</div></div>` +
+      `<input type="checkbox" class="switch" data-ext-toggle="${esc(e.id)}"${e.enabled ? ' checked' : ''}${extBusy ? ' disabled' : ''}></div>`;
+    if (e.error) h += `<div class="error">${esc(e.error)}</div>`;
+    if (e.enabled && e.blocks?.length) h += `<div class="ext-blocks">${extBlocks(e.id, e.blocks)}</div>`;
+    return h + '</div>';
+  };
+  return settingSection('Extensions', '<div class="hint">Each integration is an extension: switch one off and its hooks leave your connected places.</div>' +
+    list.map(card).join(''));
 }
 
 function islandBehaviourSection() {
@@ -127,8 +132,8 @@ ui.settings.push(
   { tab: 'general', order: 20, render: displaysSection },
   { tab: 'general', order: 40, render: hotkeysSection },
   { tab: 'general', order: 50, render: aboutSection },
-  { tab: 'sessions', order: 10, render: toolsSection },
-  { tab: 'sessions', order: 20, render: serversSection },
+  { tab: 'sessions', order: 10, render: placesSection },
+  { tab: 'sessions', order: 20, render: extensionsSection },
   { tab: 'sessions', order: 30, render: islandBehaviourSection },
   { tab: 'alerts', order: 10, render: remindersSection },
   { tab: 'alerts', order: 20, render: soundSection },
@@ -142,13 +147,26 @@ async function loadConnections(fresh = false) {
   if (open && view === 'settings') render();
 }
 
-async function runConnect(target, on, arg) {
-  connBusy = target + (arg || '');
+async function runConnect(placeId, on) {
+  connBusy = placeId;
   connError = '';
+  connFix = null;
   render();
-  const r = await api.connect(target, on, arg);
+  const r = await api.connect(placeId, on);
   connBusy = '';
   conn = r.status || conn;
+  if (!r.ok) { connError = r.error; connFix = r.fix || null; } // a fix: a button the place offers (key login to a server)
+  render();
+}
+
+/** An extension switched on or off: an agent then goes into, or out of, your connected places. */
+async function toggleExtension(id, on) {
+  extBusy = true;
+  connError = '';
+  render();
+  const r = await api.extensionEnable(id, on);
+  extBusy = false;
+  if (r.status) conn = r.status;
   if (!r.ok) connError = r.error;
   render();
 }
@@ -160,6 +178,7 @@ ui.pages.settings = {
   opened(tab) {
     if (SETTINGS_TABS.some(([id]) => id === tab)) settingsTab = tab;
     connError = '';
+    connFix = null;
     updateNote = '';
     loadConnections(true);
   },
@@ -167,13 +186,12 @@ ui.pages.settings = {
     const t = e.target;
     const tab = t.closest('[data-stab]');
     if (tab) { settingsTab = tab.dataset.stab; body.scrollTop = 0; render(); return true; }
-    const btn = t.closest('[data-conn]');
-    if (btn) { runConnect(btn.dataset.conn, btn.dataset.on === '1', btn.dataset.arg); return true; }
+    const btn = t.closest('[data-place]');
+    if (btn) { runConnect(btn.dataset.place, btn.dataset.on === '1'); return true; }
+    const extBtn = t.closest('[data-ext-action]');
+    if (extBtn) { await extAction(extBtn); if (extBtn.dataset.extAction === 'key-login') connFix = null; render(); return true; }
     const cmd = t.closest('[data-cmd]')?.dataset.cmd;
     if (cmd === 'identify') { api.identifyDisplays(); return true; }
-    if (cmd === 'copy-token') { await api.copyToken(); showNote('Token copied'); return true; }
-    if (cmd === 'ext-folder') { api.openExtensionFolder(); return true; }
-    if (cmd === 'copy-ext-path') { await api.copyText(state.app?.extensionDir || ''); showNote('Folder path copied'); return true; }
     if (cmd === 'data-folder') { api.openDataFolder(); return true; }
     if (cmd === 'uninstall') { api.uninstall(); return true; }
     if (cmd === 'update-open') { api.openLink(state.app?.update?.url); return true; }
@@ -187,6 +205,8 @@ ui.pages.settings = {
     return false;
   },
   async change(e) {
+    const ext = e.target.dataset?.extToggle;
+    if (ext) { toggleExtension(ext, e.target.checked); return true; }
     if (!e.target.dataset?.display) return false;
     const ids = [...island.querySelectorAll('[data-display]')].filter(x => x.checked).map(x => x.dataset.display);
     if (!ids.length) { e.target.checked = true; return true; } // the island needs at least one display

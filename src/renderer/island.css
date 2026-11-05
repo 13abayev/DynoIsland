@@ -12,9 +12,7 @@
   --done: #30d158;
   --work: #64d2ff;
   --bad: #ff6961;
-  --claude: #d97757;
-  --gpt: #19c37d;
-  --codex: #b8b5ff;
+
   --week: #8ab4ff;
   --tint: #8ab4ff; /* the cover's color while music plays (media-ui.js) */
   --ease: cubic-bezier(.32, .72, 0, 1);
@@ -332,3 +330,14 @@ details.more .hint { margin: 6px 0 0; }
 .lname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ldesc { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lhint { margin: 10px 8px; }
+
+/* ---------- extensions (agents' icons; settings → Sessions → Extensions) ---------- */
+.ag-icon { display: inline-grid; place-items: center; }
+.ag-icon svg { width: 15px; height: 15px; }
+.ext-card { margin: 0 0 6px; border-radius: 12px; background: var(--raise); }
+.ext-card.off { opacity: .6; }
+.ext-card .opt:hover { background: none; }
+.ext-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: var(--raise-2); }
+.ext-icon svg { width: 15px; height: 15px; }
+.ext-blocks { padding: 0 8px 6px; }
+.ext-blocks .steps { margin: 4px 0 6px 22px; }

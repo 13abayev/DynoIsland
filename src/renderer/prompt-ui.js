@@ -13,7 +13,7 @@ async function qpLoad() {
 }
 
 function qpLabel(p) {
-  const where = p.src === 'wsl' ? 'WSL' : p.src === 'ssh' ? p.host : 'Windows';
+  const where = p.where || 'Windows'; // where it is, as its place extension says
   return `${p.project} · ${where}`;
 }
 

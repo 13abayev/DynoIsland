@@ -1,0 +1,6 @@
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "version": "1.0.0",
+  "description": "Claude Code sessions in terminals, VS Code and the Claude app's Code tab: what they do, their questions and plans to answer, and replies to finished ones."
+}

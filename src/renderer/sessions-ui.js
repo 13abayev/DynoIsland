@@ -71,21 +71,24 @@ function limitsPanel() {
 }
 
 // ---------- answering in the island ----------
+/**
+ * What a session asks, as its agent extension describes it (s.request): kind questions (its options to pick from),
+ * plan (approve, or keep planning with a note) or permission (allow / deny).
+ */
 function answerBox(s) {
-  if (!s.canAnswer || !s.permission) return '';
-  const { tool, input } = s.permission;
-  const k = esc(s.key);
-  if (tool === 'AskUserQuestion') {
-    const qs = Array.isArray(input.questions) ? input.questions : [];
+  if (!s.canAnswer || !s.request) return '';
+  const r = s.request, k = esc(s.key);
+  if (r.kind === 'questions') {
+    const qs = Array.isArray(r.questions) ? r.questions : [];
     const instant = qs.length === 1 && !qs[0].multiSelect; // one question, one answer: a click sends it
     const chosen = picks[s.key] || {};
     return `<div class="answer">${qs.map((q, qi) => `${qs.length > 1 || q.multiSelect ? `<div class="q">${esc(q.question)}</div>` : ''}<div class="choices">` +
-      (q.options || []).map(o => `<button class="choice${(chosen[qi] || []).includes(o.label) ? ' on' : ''}" data-pick="${k}" data-q="${qi}" data-label="${esc(o.label)}"` +
+      (q.options || []).map(o => `<button class="choice${(chosen[qi] || []).includes(o.label) ? ' on' : ''}" data-choice="${k}" data-q="${qi}" data-label="${esc(o.label)}"` +
         `${instant ? ' data-send="1"' : ''} title="${esc(o.description || '')}">${esc(o.label)}</button>`).join('') + '</div>').join('')}` +
       `${instant ? '' : `<div class="answer-row"><button class="btn primary" data-answer="answers" data-key="${k}">Send answers</button></div>`}</div>`;
   }
-  if (tool === 'ExitPlanMode') {
-    const plan = String(input.plan || '').replace(/\s+/g, ' ').trim();
+  if (r.kind === 'plan') {
+    const plan = String(r.plan || '').replace(/\s+/g, ' ').trim();
     return `<div class="answer">${plan ? `<div class="plan">${esc(plan.slice(0, 400))}${plan.length > 400 ? '…' : ''}</div>` : ''}` +
       `<div class="answer-row"><button class="btn primary" data-answer="approve" data-key="${k}">Approve plan</button>` +
       `<input class="field" data-draft="plan:${k}" placeholder="What should change? (optional)">` +
@@ -98,7 +101,7 @@ function answerBox(s) {
 function replyBox(s) {
   if (!s.canReply || !replyOpen.has(s.key)) return '';
   const k = esc(s.key);
-  return `<div class="answer"><div class="answer-row"><input class="field" data-draft="reply:${k}" data-reply-input="${k}" placeholder="Reply to ${esc(s.project || 'Claude')}…">` +
+  return `<div class="answer"><div class="answer-row"><input class="field" data-draft="reply:${k}" data-reply-input="${k}" placeholder="Reply to ${esc(s.project || agentName(s.agent))}…">` +
     `<button class="btn primary" data-reply="${k}">Send</button></div></div>`;
 }
 
@@ -113,9 +116,7 @@ function row(s) {
   const now = Date.now();
   const st = s.state === 'needs_you' ? 'ask' : s.state === 'done' && !s.seen ? 'done' : s.state === 'working' ? 'work' : 'idle';
   const time = s.state === 'working' ? ago(now - (s.turnStartedAt || s.since)) : ago(now - (s.since || s.updatedAt));
-  const badge = s.src === 'wsl' ? 'WSL' : s.src === 'ssh' ? esc(s.host || 'SSH')
-    : s.src === 'win' ? (String(s.window?.process || '').toLowerCase() === 'claude' ? 'Claude app' : 'Windows')
-    : s.agent === 'chatgpt' ? 'ChatGPT' : 'Claude';
+  const badge = esc(s.where || agentName(s.agent)); // where it runs, as its extensions say ("WSL", "jabrail96", "Claude app")
   let line = '', lineCls = '';
   if (s.state === 'needs_you') { line = s.ask || 'Waiting for you'; lineCls = 'ask'; }
   else if (s.state === 'working') line = s.doing || 'Working';
@@ -139,7 +140,7 @@ function sessionsPage() {
   const g = groups();
   const extra = ui.sections.map(f => f()).join('');
   if (!state.sessions.length) {
-    return limitsPanel() + extra + `<div class="empty"><b>No AI sessions yet.</b><br>Connect Claude Code, Codex or your browser in ` +
+    return limitsPanel() + extra + `<div class="empty"><b>No AI sessions yet.</b><br>Connect where your agents run in ` +
       `<span class="link" data-go="settings:sessions">settings</span>. Sessions appear here as soon as they start.</div>`;
   }
   const section = (title, list, cls) => list.length ? `<div class="section ${cls}">${title} <span class="n">${list.length}</span></div>` + list.map(row).join('') : '';
@@ -153,11 +154,11 @@ function sessionsPage() {
 
 async function sessionsClick(e) {
   const t = e.target;
-  const pick = t.closest('[data-pick]');
+  const pick = t.closest('[data-choice]');
   if (pick) {
-    const key = pick.dataset.pick, qi = Number(pick.dataset.q), label = pick.dataset.label;
+    const key = pick.dataset.choice, qi = Number(pick.dataset.q), label = pick.dataset.label;
     const s = state.sessions.find(x => x.key === key);
-    const q = s?.permission?.input?.questions?.[qi];
+    const q = s?.request?.questions?.[qi];
     if (pick.dataset.send) { send(key, { type: 'answers', answers: { [q.question]: label } }); return true; }
     const chosen = (picks[key] ||= {});
     const list = chosen[qi] || [];
@@ -174,7 +175,7 @@ async function sessionsClick(e) {
     else if (kind === 'keep') { send(key, { type: 'plan', approve: false, note: ui.drafts[`plan:${key}`] || '' }); delete ui.drafts[`plan:${key}`]; }
     else if (kind === 'answers') {
       const s = state.sessions.find(x => x.key === key);
-      const qs = s?.permission?.input?.questions || [], chosen = picks[key] || {};
+      const qs = s?.request?.questions || [], chosen = picks[key] || {};
       const answers = {};
       qs.forEach((q, i) => { if (chosen[i]?.length) answers[q.question] = q.multiSelect ? chosen[i] : chosen[i][0]; });
       if (!Object.keys(answers).length) { showNote('Pick an answer first'); return true; }

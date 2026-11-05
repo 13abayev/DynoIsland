@@ -12,16 +12,21 @@ const PORT = 47900;
 const ANSWER_WAIT = 25 * 60 * 1000; // a permission prompt waits this long for your answer in the island
 const REPLY_WAIT = 3 * 60 * 60 * 1000; // a finished session waits this long for your reply
 
-function startServer({ hub, jobs, token, settings, onExtChange, onJump, onPair = async () => false, debug }) {
+/**
+ * agentHook(agent): the hook part of the extension that brings that agent ({ events(payload, meta) → { id, cwd,
+ * fields, events } }), or null; onExtMessage(m): what the browser add-on reports, for the extension that takes it.
+ */
+function startServer({ hub, jobs, token, settings, agentHook, onExtMessage, onExtChange, onJump, onPair = async () => false, debug }) {
   const expected = Buffer.from(token);
   const okToken = v => {
     const given = Buffer.from(String(v || ''));
     return given.length === expected.length && crypto.timingSafeEqual(given, expected);
   };
   const fromB64 = v => { try { return v ? Buffer.from(String(v), 'base64').toString('utf8') : ''; } catch { return ''; } };
+  const word = v => (/^[a-z0-9][a-z0-9-]{0,40}$/.test(String(v || '')) ? String(v) : '');
   const meta = h => ({
-    agent: h['x-island-agent'] === 'codex' ? 'codex' : 'claude',
-    src: ['win', 'wsl', 'ssh'].includes(h['x-island-src']) ? h['x-island-src'] : 'ssh',
+    agent: word(h['x-island-agent']) || 'claude', // hooks from before extensions only said codex
+    src: word(h['x-island-src']) || 'ssh',
     host: String(h['x-island-host'] || ''),
     alias: String(h['x-island-alias'] || ''),
     distro: String(h['x-island-distro'] || ''),
@@ -47,19 +52,27 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, onPair =
     if (req.headers.origin || !okToken(req.headers['x-island-token'])) return json(res, 403, {});
     if (req.method === 'GET' && url.pathname === '/debug/sessions') return json(res, 200, hub.view());
     if (req.method === 'GET' && url.pathname === '/debug/islands') return json(res, 200, await debug.islands());
+    if (req.method === 'GET' && url.pathname === '/debug/connections') { // what settings → Sessions shows (for testing)
+      try { return json(res, 200, await debug.connections()); } catch (e) { return json(res, 200, { error: e.stack || e.message }); }
+    }
     if (req.method !== 'POST') return json(res, 404, {});
     let data = {};
     try { data = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, {}); }
     if (url.pathname === '/hook') {
-      const m = meta(req.headers);
-      const key = hub.sessionKey(m, data);
+      // an agent's hook or plugin: the extension that brings that agent says what it means
+      const m = meta(req.headers), hook = agentHook(m.agent);
+      if (!hook?.events) return json(res, 404, { error: `No extension that is on takes events from "${m.agent}".` });
+      let r;
+      try { r = hook.events(data, m) || { events: [] }; } catch (e) { console.error('Island hook:', e); return json(res, 200, {}); }
+      const key = hub.sessionKey(m.agent, r.id);
       const wait = url.searchParams.get('wait') === '1' && key && settings().answerFromIsland;
       if (!wait) res.writeHead(204).end(); // answer first: the hook must not wait for Island
-      hub.hookEvent(m, data);
+      hub.apply(m.agent, m, { events: [], ...r });
       // a permission prompt waits here for your answer in the island; the terminal can still answer it meanwhile
       if (wait) await holdFor(res, key, 'permission', ANSWER_WAIT);
     } else if (url.pathname === '/reply-wait') {
-      const key = hub.sessionKey(meta(req.headers), data);
+      const m = meta(req.headers), hook = agentHook(m.agent);
+      const key = hook?.events ? hub.sessionKey(m.agent, hook.events(data, m)?.id) : '';
       if (!key || !settings().answerFromIsland) return json(res, 200, {});
       await holdFor(res, key, 'reply', REPLY_WAIT);
     } else if (url.pathname === '/job') {
@@ -135,10 +148,8 @@ function startServer({ hub, jobs, token, settings, onExtChange, onJump, onPair =
           onExtChange();
           return;
         }
-        if (m.type === 'chat') hub.chatEvent(m);
-        else if (m.type === 'closed') hub.chatClosed(m.key);
-        else if (m.type === 'sync') hub.chatSync(m.keys);
-        else if (m.type === 'ping') ws.send('{"type":"pong"}');
+        if (m.type === 'ping') ws.send('{"type":"pong"}');
+        else onExtMessage?.(m); // chats (the browser extension, src/extensions/browser, says what they mean)
       });
       ws.on('close', () => { clearTimeout(giveUp); if (exts.delete(ws)) onExtChange(); });
       ws.on('error', () => {});

@@ -1,0 +1,6 @@
+{
+  "id": "ssh",
+  "name": "SSH servers",
+  "version": "1.0.0",
+  "description": "Agents on the servers in your SSH config: Island's Linux kit goes into ~/.island there, and Island keeps its own SSH tunnel open so their events reach this PC."
+}

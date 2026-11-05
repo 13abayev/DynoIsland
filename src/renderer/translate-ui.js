@@ -30,7 +30,7 @@ api.onTranslation(t => { translation = t; render(); });
 /** Where Claude Code runs for translations: on Windows, in WSL (when it is installed) or on a connected server. */
 function claudeInOptions() {
   const opts = [['auto', 'Wherever it is installed'], ['windows', 'On Windows']];
-  if (conn?.wslInstalled || state.settings?.claudeIn === 'wsl') opts.push(['wsl', 'In WSL']);
+  if (conn?.places?.some(p => p.kind === 'wsl') || state.settings?.claudeIn === 'wsl') opts.push(['wsl', 'In WSL']);
   for (const alias of state.settings?.sshServers || []) opts.push([alias, `On ${alias}`]);
   return opts;
 }

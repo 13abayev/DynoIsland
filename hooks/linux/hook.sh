@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Island hook: sends a Claude Code / Codex event to the Island app on your Windows PC.
+# Island hook: sends an agent's event (Claude Code, Codex, OpenCode…) to the Island app on your Windows PC.
 # Island installs this into ~/.island/ (in WSL, or on an SSH server) and adds it to the agent's hooks:
-#   bash ~/.island/hook.sh claude|codex        the event comes in as JSON on stdin
-#   bash ~/.island/hook.sh claude wait         a permission prompt: waits for your answer in the island and
-#                                              prints it for Claude Code (nothing, if you answer in the terminal)
+#   bash ~/.island/hook.sh <agent>             the event comes in as JSON on stdin
+#   bash ~/.island/hook.sh <agent> wait        a permission prompt: waits for your answer in the island and
+#                                              prints it (nothing, if you answer in the terminal)
+#   bash ~/.island/hook.sh <agent> reply       a finished session: waits for your reply in the island and prints it
 # In WSL it uses Windows' own curl.exe, which reaches Island on 127.0.0.1 directly.
 # On an SSH server, 127.0.0.1:<port> is the tunnel Island keeps open back to your PC.
 # It always exits 0, and only prints an answer you gave in the island, so it never blocks or changes anything else.
@@ -29,10 +30,12 @@ headers=(-H "Content-Type: application/json" -H "X-Island-Token: $token" -H "X-I
   -H "X-Island-Distro: ${WSL_DISTRO_NAME:-}" -H "X-Island-Term: ${TERM_PROGRAM:-}"
   -H "X-Island-Entry: ${CLAUDE_CODE_ENTRYPOINT:-}" -H "X-Island-Branch: $branch" -H "X-Island-Summary: $summary")
 
-if [ "$mode" = wait ]; then
-  answer=$(printf '%s' "$payload" | "$curl" -s -m 1800 -X POST "${headers[@]}" --data-binary @- \
-    "http://127.0.0.1:$port/hook?wait=1" 2>/dev/null | tr -d '\r')
-  case "$answer" in *hookSpecificOutput*) printf '%s\n' "$answer" ;; esac
+if [ "$mode" = wait ] || [ "$mode" = reply ]; then
+  # an answer only when you gave one: no answer, or an empty one ({}), prints nothing
+  if [ "$mode" = wait ]; then url="hook?wait=1" max=1800; else url="reply-wait" max=10800; fi
+  answer=$(printf '%s' "$payload" | "$curl" -s -m "$max" -X POST "${headers[@]}" --data-binary @- \
+    "http://127.0.0.1:$port/$url" 2>/dev/null | tr -d '\r')
+  case "$answer" in ''|'{}') ;; *) printf '%s\n' "$answer" ;; esac
   exit 0
 fi
 

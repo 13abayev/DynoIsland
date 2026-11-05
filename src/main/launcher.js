@@ -8,16 +8,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
-const { wslInfo } = require('./win');
 const { openInVsCode } = require('./jump');
-const { sshHosts } = require('./connect');
+const { openTerminal, POWERSHELL } = require('./terminal');
 const { calculate, convert } = require('./calc');
 
 const HOME = os.homedir();
-const WT = path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Microsoft', 'WindowsApps', 'wt.exe');
-// wt.exe is one of Windows' app shortcuts (a reparse point): fs.existsSync says no, lstat sees it
-const hasWindowsTerminal = () => { try { fs.lstatSync(WT); return true; } catch { return false; } };
-const POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 // folders not worth searching: tools' caches, dependencies, build output
 const SKIP = new Set(['node_modules', '__pycache__', 'site-packages', 'appdata', 'dist', 'build', 'target', 'bin', 'obj', 'venv', 'env', 'coverage']);
 const MAX_ENTRIES = 200000;
@@ -50,9 +45,9 @@ function score(name, q, { fuzzy = true } = {}) {
 }
 
 class Launcher {
-  /** @param {{ helper, hub, settings: () => object, updateSettings: (patch) => void, dataDir: string, projects: () => Promise<object[]> }} o */
-  constructor({ helper, hub, settings, updateSettings, dataDir, projects }) {
-    Object.assign(this, { helper, hub, settings, updateSettings, projects });
+  /** @param {{ helper, hub, extensions, settings: () => object, updateSettings: (patch) => void, dataDir: string, projects: () => Promise<object[]> }} o */
+  constructor({ helper, hub, extensions, settings, updateSettings, dataDir, projects }) {
+    Object.assign(this, { helper, hub, extensions, settings, updateSettings, projects });
     this.usageFile = path.join(dataDir, 'launcher.json');
     try { this.usage = JSON.parse(fs.readFileSync(this.usageFile, 'utf8')); } catch { this.usage = {}; }
     this.apps = []; // { name, appId, lnk }
@@ -145,22 +140,22 @@ class Launcher {
       const key = `${p.src}|${p.host || ''}|${p.cwd}`;
       if (!p.cwd || seen.has(key)) continue;
       seen.add(key);
-      const where = p.src === 'wsl' ? `WSL · ${p.cwd}` : p.src === 'ssh' ? `${p.host} · ${p.cwd}` : p.cwd.replace(HOME, '~');
+      const place = this.extensions.placeFor(p.src), at = place?.label?.(p) || p.src;
+      const where = place?.os === 'windows' ? p.cwd.replace(HOME, '~') : `${at} · ${p.cwd}`;
       out.push({ id: 'project:' + key, kind: 'project', name: p.project || path.basename(p.cwd), desc: where, src: p.src, host: p.host || '', distro: p.distro || '', cwd: p.cwd });
     }
     return out;
   }
 
+  /** The terminals the place extensions offer (PowerShell here, your WSL distro, ssh to each server). */
   async terminalItems() {
-    const wsl = await wslInfo();
-    const list = [{ id: 'term:win', kind: 'terminal', name: 'Terminal', desc: 'PowerShell, in your home folder', src: 'win', cwd: HOME, keys: ['terminal', 'powershell', 'pwsh', 'cmd', 'console', 'shell', 'command prompt'] }];
-    if (wsl.installed) list.push({ id: 'term:wsl', kind: 'terminal', name: `${wsl.default} (WSL)`, desc: 'A terminal in WSL', src: 'wsl', distro: wsl.default, cwd: '~', keys: ['wsl', 'linux', 'bash', ...wsl.distros.map(d => d.toLowerCase())] });
-    for (const alias of this.servers()) list.push({ id: 'term:ssh:' + alias, kind: 'terminal', name: `ssh ${alias}`, desc: 'A terminal on that server', src: 'ssh', host: alias, cwd: '', keys: ['ssh', alias.toLowerCase()] });
+    const list = [];
+    for (const place of this.extensions.places()) {
+      for (const t of (await Promise.resolve(place.terminals?.()).catch(() => [])) || []) {
+        list.push({ ...t, id: `term:${place.id}:${t.id}`, kind: 'terminal', src: place.src, cwd: t.cwd ?? (place.os === 'windows' ? HOME : ''), keys: t.keys || [] });
+      }
+    }
     return list;
-  }
-
-  servers() {
-    try { return sshHosts().map(h => h.alias); } catch { return []; }
   }
 
   /** Things you opened often and lately score higher. */
@@ -252,7 +247,7 @@ class Launcher {
       case 'file':
       case 'folder': {
         const dir = item.kind === 'folder' ? item.path : path.dirname(item.path);
-        if (how === 'terminal') return this.terminal({ src: 'win', cwd: dir });
+        if (how === 'terminal') return openTerminal({ dir });
         if (how === 'folder') { shell.showItemInFolder(item.path); return { ok: true }; }
         const err = await shell.openPath(item.path);
         return err ? { ok: false, error: err } : { ok: true };
@@ -260,8 +255,8 @@ class Launcher {
       case 'project':
         if (how === 'terminal') return this.terminal(item);
         if (how === 'folder') {
-          const where = item.src === 'win' ? item.cwd : item.src === 'wsl' ? `\\\\wsl.localhost\\${item.distro || (await wslInfo()).default}${item.cwd.replace(/\//g, '\\')}` : '';
-          if (!where) return { ok: false, error: 'A folder on a server cannot be shown in Explorer.' };
+          const where = await this.extensions.placeFor(item.src)?.explorer?.(item);
+          if (!where) return { ok: false, error: 'That folder cannot be shown in Explorer (it is on a server).' };
           const err = await shell.openPath(where);
           return err ? { ok: false, error: err } : { ok: true };
         }
@@ -269,7 +264,7 @@ class Launcher {
       case 'terminal':
         return this.terminal(item);
       case 'run':
-        return this.terminal({ src: 'win', cwd: HOME, command: item.command });
+        return openTerminal({ dir: HOME, command: item.command });
       case 'web':
         await shell.openExternal((WEB[this.settings().webSearch] || WEB.google) + encodeURIComponent(item.text));
         return { ok: true };
@@ -278,41 +273,18 @@ class Launcher {
     }
   }
 
+  /** A project in VS Code (also in WSL or on a server, as its place extension says); without VS Code, a terminal there. */
   async openProject(p) {
-    const distro = p.src === 'wsl' ? p.distro || (await wslInfo()).default : '';
-    const uri = p.src === 'wsl' ? `vscode-remote://wsl+${distro}${p.cwd}` : p.src === 'ssh' ? `vscode-remote://ssh-remote+${p.host}${p.cwd}` : null;
-    if (openInVsCode(uri ? ['--folder-uri', uri] : [p.cwd])) return { ok: true };
-    return this.terminal(p); // no VS Code: a terminal there
+    const v = await this.extensions.placeFor(p.src)?.vscode?.(p);
+    if (v && openInVsCode(v.uri ? ['--folder-uri', v.uri] : v.args || [p.cwd])) return { ok: true };
+    return this.terminal(p);
   }
 
-  /**
-   * A terminal: in Windows Terminal when it is there, else a console window. src win (PowerShell in cwd), wsl (in
-   * cwd, in that distro) or ssh (on host, in cwd); command: run that in it (Windows).
-   */
-  async terminal({ src = 'win', cwd = '', host = '', distro = '', command = '' }) {
-    const dir = src === 'win' && cwd && fs.existsSync(cwd) ? cwd : HOME;
-    const d = src === 'wsl' ? distro || (await wslInfo()).default : '';
-    const sh = s => `'${String(s).replace(/'/g, `'\\''`)}'`; // quoted for the server's shell
-    const remote = src === 'ssh' && cwd ? `cd ${sh(cwd)} && exec $SHELL -l` : '';
-    try {
-      if (hasWindowsTerminal()) {
-        const line = src === 'wsl' ? ['wsl.exe', ...(d ? ['-d', d] : []), '--cd', cwd || '~']
-          : src === 'ssh' ? ['ssh', '-t', host, ...(remote ? [remote] : [])]
-          : [POWERSHELL, '-NoLogo', '-NoExit', ...(command ? ['-Command', command] : [])];
-        // Windows Terminal reads ";" as "and a new tab": a ";" that belongs to the command is written "\;"
-        spawn(WT, ['-d', dir, ...line.map(a => a.replace(/;/g, '\\;'))], { detached: true, stdio: 'ignore' }).unref();
-      } else {
-        // a console window of its own, opened by "start" so the shell gets the keyboard; PowerShell runs the line,
-        // handed over encoded so that no character in it means something to cmd
-        const ps = s => `'${String(s).replace(/'/g, "''")}'`;
-        const script = src === 'wsl' ? `& wsl.exe ${d ? `-d ${ps(d)} ` : ''}--cd ${ps(cwd || '~')}`
-          : src === 'ssh' ? `& ssh -t ${ps(host)}${remote ? ' ' + ps(remote) : ''}` : command;
-        const encoded = script ? ` -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}` : '';
-        spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', `start "" /D "${dir}" "${POWERSHELL}" -NoLogo -NoExit${encoded}`],
-          { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
-      }
-      return { ok: true };
-    } catch (e) { return { ok: false, error: e.message }; }
+  /** A terminal where a project or terminal answer is: its place extension opens it. */
+  async terminal(item) {
+    const place = this.extensions.placeFor(item.src);
+    if (!place?.terminal) return { ok: false, error: 'No extension that is on opens a terminal there.' };
+    return (await place.terminal(item)) || { ok: true };
   }
 
   used(item) {

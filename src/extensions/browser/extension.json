@@ -1,0 +1,6 @@
+{
+  "id": "browser",
+  "name": "ChatGPT and Claude in the browser",
+  "version": "1.0.0",
+  "description": "Chats on chatgpt.com and claude.ai in Chrome or Edge, through Island's browser add-on (the extension folder): when one is answering, done, or waits for you."
+}
