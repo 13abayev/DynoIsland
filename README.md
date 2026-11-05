@@ -1,9 +1,10 @@
 # Island
 
-A Dynamic Island for Windows: a small notch at the top of your screen for your AI sessions (Claude Code and
-Codex in WSL, on Windows and on SSH servers, ChatGPT and Claude in the browser), with reminders, answers right in
-the island, your Claude limits, your long-running jobs, a shelf for files, your phone's clipboard, what is
-playing, your clipboard, notes, timers, your next meeting, and Robo.
+A Dynamic Island for Windows: a small notch at the top of your screen for your AI sessions (Claude Code, Codex
+and OpenCode in WSL, on Windows and on SSH servers, ChatGPT and Claude in the browser), with reminders, answers
+right in the island, your Claude limits, your long-running jobs, a shelf for files, your phone's clipboard, what
+is playing, your clipboard, notes, timers, your next meeting, and Robo. Every integration is an
+[extension](#extensions), and you can add your own.
 
 ## Install
 
@@ -16,8 +17,8 @@ optional: you only need it for Claude Code or Codex inside WSL.
 3. The island opens with **Setup**. Press **Install Island**: it goes into `%LOCALAPPDATA%\Programs\Island` (no
    admin rights needed), gets a Start menu entry, and Settings → Apps can remove it again. Then setup walks you
    through:
-   - **your AI tools**: Island finds Claude Code (on Windows and in WSL), Codex and the servers in your SSH config,
-     and connects what you pick;
+   - **your AI tools**: Island finds Claude Code (on Windows and in WSL), Codex, OpenCode and the servers in your
+     SSH config, and connects what you pick;
    - **ChatGPT and Claude in the browser**: you load the extension, and it connects by itself;
    - **where Claude Code runs** for translate and the quick prompt;
    - **your phone** (optional);
@@ -36,9 +37,23 @@ To run Island from its source instead, see [Developing](#developing).
 
 **Hover** the notch to peek, **click** it to keep it open. Right-click it to quit or restart. The open island
 has tabs: **Sessions** (with your jobs), **Ask**, **Clipboard**, **Shelf**, **Notes** and **Focus**, and the gear for
-settings. What is playing and your next meeting show above the tabs. Settings has its own tabs: **General**
-(start with Windows, displays, Robo, hotkeys, updates, uninstall), **Sessions** (your connections), **Alerts**,
-**Phone**, **Tools** (clipboard, translate) and **Devices** (media, volume and brightness, batteries).
+settings. What is playing and your next meeting show above the tabs. Settings has its own tabs:
+- **General**: start with Windows, showing the island, displays, Robo, hotkeys, updates, uninstall;
+- **Sessions**: your connections and extensions;
+- **Alerts**;
+- **Phone**;
+- **Tools**: clipboard, translate;
+- **Devices**: media, volume and brightness, batteries.
+
+**Showing the island** (settings → General) chooses how the island shows itself:
+- **Always**, as above.
+- **When the mouse touches the top of the screen**: hidden until the mouse touches the top edge above it. Then
+  it opens.
+- **Only with the hotkey**.
+
+When hidden, it still opens for a moment when a session needs you (you can switch that off). You can also choose
+how long the mouse rests on the notch before it opens (0.32 s), and how long it stays open after the mouse
+leaves (0.45 s).
 
 ### Hotkeys
 
@@ -244,6 +259,7 @@ it added, and so does uninstalling Island.
 | Claude Code / Codex in WSL | Hooks in WSL that reach Island through Windows' own `curl.exe` |
 | Claude Code on Windows (terminal, and the Claude app's Code tab) | Hooks that run the helper with `dotnet` |
 | Claude Code / Codex on SSH servers (VS Code Remote-SSH or plain ssh) | Hooks on the server, sent back through Island's own SSH tunnel |
+| OpenCode in WSL and on SSH servers | A plugin of Island's in OpenCode's plugin folder, sent the same way as the hooks there |
 | Your jobs (`island run`) in WSL and on servers | The `island` command, the same way as the hooks there |
 | ChatGPT and Claude in Chrome / Edge | The browser extension in `extension/` |
 
@@ -251,6 +267,8 @@ it added, and so does uninstalling Island.
   or `~/.codex/hooks.json`, and the `island` command (a line in `~/.bashrc`, and `~/.zshrc` if you have one,
   puts `~/.island/bin` on your PATH).
 - **Claude Code on Windows**: adds hooks to `%USERPROFILE%\.claude\settings.json`.
+- **OpenCode**: adds `~/.config/opencode/plugins/island.js`. Its permission prompts can be allowed or denied in
+  the island (OpenCode can still answer them first), and the ↩ button sends your reply into a finished session.
 - **SSH servers**: adds `~/.island/` plus hooks and the `island` command on the server (it needs `python3` there). Island keeps its own
   SSH connection to that server open (`ssh -N -R 127.0.0.1:47900:127.0.0.1:47900 <server>`), so the server's
   port 47900 leads back to Island; it reconnects by itself and logs in with your SSH keys, like VS Code does.
@@ -261,6 +279,29 @@ it added, and so does uninstalling Island.
 
 Claude Code reads its hooks when a session starts: sessions that were already running pick up new hooks after
 you restart them.
+
+## Extensions
+
+Every integration is an extension. Each one has a card in settings → **Sessions** → **Extensions**, with a switch.
+
+| Built in | |
+|---|---|
+| **Claude Code**, **Codex**, **OpenCode** | agents: their sessions, and answers from the island where the agent allows it |
+| **ChatGPT and Claude in the browser** | an agent: chats, through the browser add-on |
+| **Windows**, **WSL**, **SSH servers** | places: where agents run, and how Island reaches them |
+
+- **Switching an agent off** takes its hooks out of your connected places and its sessions out of the island.
+  Switching it on puts the hooks back.
+- **Add extension…** adds one of your own. Pick its folder: Island copies it into `%APPDATA%\Island\extensions`,
+  and it stays off until you switch it on.
+  - An extension runs inside Island with Island's full access, so Island asks you first. Only switch on
+    extensions you made yourself or trust.
+  - Adding the same one again updates it.
+  - **Remove** deletes it.
+
+A new tool joins Island the same way, without any change to Island itself. [EXTENSIONS.md](EXTENSIONS.md)
+describes how to write one. `examples/extensions/hello` is a small working agent extension to start from, and
+settings has **How to make one**.
 
 ## Developing
 
@@ -301,10 +342,11 @@ src/main/install.js   installing from the zip, Settings → Apps, uninstalling, 
 src/main/checks.js    what Island needs from you, for setup and the dots on settings tabs
 src/main/win.js       the registry, and whether WSL is installed
 src/main/islands.js   one island window per chosen display
-src/main/sessions.js  the session hub: states, seen-detection, reminders, answers and replies
+src/main/extensions.js  the extensions: loading, switching on and off, adding, updating, removing (EXTENSIONS.md)
+src/main/sessions.js  the session hub: states, seen-detection, reminders, answers and replies (Island's own events)
+src/main/hookformat.js  Claude Code's hook format (Codex follows it), for the agent extensions that speak it
 src/main/server.js    127.0.0.1:47900, only with your token: hooks post (and wait for answers) here
-src/main/connect.js   Connect / Update / Disconnect (Windows, WSL, SSH)
-src/main/tunnels.js   Island's own SSH tunnel to each connected server
+src/main/connect.js   Connect / Update / Disconnect of any place, with every agent extension that is on
 src/main/quick.js     claude -p in a project (quick prompt, translate)
 src/main/launcher.js  Spotlight: apps, projects, files (Windows Search + your folders), terminals; calc.js: sums
 src/main/clips.js     clipboard history; clip-io.js: Electron 45's asynchronous clipboard
@@ -315,6 +357,9 @@ src/main/jobs.js      your jobs (island run / island progress)
 src/main/shelf.js     the shelf: files you dropped, scp to your servers
 src/main/phone.js     your phone, through your own Telegram bot
 src/main/jump.js      bringing back a session's window or tab
+src/extensions/       the built-in extensions: claude-code, codex, opencode (its plugin.js), browser, and the
+                      places windows, wsl and ssh (tunnels.js: Island's own SSH tunnel to each connected server)
+examples/extensions/  hello: an agent extension to start yours from
 src/renderer/         the island: core.js + island.js, and one *-ui.js per part (sessions, jobs, prompt,
                       clipboard, shelf, phone, notes, focus, media, volume bar, batteries, meeting, translate, mascot,
                       settings, setup)
@@ -340,6 +385,10 @@ jobs, the shelf and your phone's bot.
   takes the files; drag onto the notch (or the open island). **Add files…** on the Shelf tab does the same without
   dragging.
 - **Codex** is tracked, but answering its permission prompts from the island is not supported yet.
+- **OpenCode**:
+  - Its questions (its `question` tool) show in the island, but you answer them in OpenCode.
+  - The first time OpenCode starts with Island's plugin, it updates its own plugin package, which can take a
+    minute.
 - **The browser extension** depends on how chatgpt.com and claude.ai build their pages. When they change,
   the detection at the top of `extension/content.js` may need an update.
 - **The ChatGPT and Claude desktop apps** (normal chats, not Claude Code) are not tracked. Use those chats in

@@ -1,6 +1,6 @@
 {
   "name": "island",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "A Dynamic Island for Windows: all your AI sessions in one place, with reminders.",
   "main": "src/main/main.js",
