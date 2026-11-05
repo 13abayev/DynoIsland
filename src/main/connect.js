@@ -74,7 +74,8 @@ class Connections {
   async connect(id, on, { only = null } = {}) {
     const { kind, place } = await this.find(id);
     if (kind.os === 'windows') return this.connectWindows(kind, on, only);
-    kind.connecting?.(place, on); // a server: its tunnel closes before Island's hooks go
+    // a server: its tunnel closes before Island's hooks go (not when only one agent goes in or out: it stays connected)
+    if (!only) kind.connecting?.(place, on);
     const r = await this.runLinux(kind, place, { change: on, only });
     if (kind.remembers) this.known.set(place.id, r.agents);
     if (on && !only && !r.agents.some(a => a.connected)) {

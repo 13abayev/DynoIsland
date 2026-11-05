@@ -64,6 +64,46 @@ class Extensions extends EventEmitter {
     try { ext.brings?.deactivate?.(); } catch (e) { this.logError(e); }
     ext.brings = null;
     ext.enabled = false;
+    // its code is read again when it starts again (a newer copy you added)
+    for (const file of Object.keys(require.cache)) if (inside(ext.dir, file)) delete require.cache[file];
+  }
+
+  /**
+   * Add extension…: copies the folder you picked into your extensions folder. A new one stays off until you switch it
+   * on; one you had already (the same id) is replaced by this copy and stays on or off as it was.
+   */
+  install(from) {
+    let manifest;
+    try { manifest = JSON.parse(fs.readFileSync(path.join(from, 'extension.json'), 'utf8')); } catch {
+      throw new Error('That folder has no extension.json (EXTENSIONS.md says what goes in it).');
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(manifest.id || '')) throw new Error('Its id in extension.json must be lowercase letters, digits and "-" (like "my-agent").');
+    if (!fs.existsSync(path.join(from, manifest.main || 'main.js'))) throw new Error(`It has no ${manifest.main || 'main.js'}.`);
+    const old = this.all.get(manifest.id);
+    if (old?.builtin) throw new Error(`"${manifest.id}" is one of Island's own extensions: give yours another id.`);
+    const dir = path.join(this.userDir, manifest.id);
+    if (inside(dir, from) || inside(from, dir)) throw new Error('Pick the folder you made, not one inside Island\'s extensions folder.');
+    if (old) { this.stop(old); this.all.delete(old.id); }
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(this.userDir, { recursive: true });
+    fs.cpSync(from, dir, { recursive: true, filter: src => !/[\\/]\.git$/.test(src) });
+    const ext = this.add(dir, false); // (on again if it was on: extensionsOn still says so)
+    this.emit('change');
+    return { ext, updated: !!old };
+  }
+
+  /** Removes one of yours: it stops, and its folder is deleted. */
+  remove(id) {
+    const ext = this.all.get(id);
+    if (!ext) throw new Error('No such extension.');
+    if (ext.builtin) throw new Error('Island\'s own extensions can only be switched off.');
+    this.stop(ext);
+    this.all.delete(id);
+    const on = { ...(this.settings().extensionsOn || {}) };
+    delete on[id];
+    this.updateSettings({ extensionsOn: on });
+    fs.rmSync(ext.dir, { recursive: true, force: true });
+    this.emit('change');
   }
 
   /** Switches an extension on or off (and remembers it). */
@@ -125,6 +165,12 @@ class Extensions extends EventEmitter {
     if (!fn) throw new Error('That does not work any more: the extension is off.');
     return fn(arg);
   }
+}
+
+/** Whether file is dir itself or inside it. */
+function inside(dir, file) {
+  const rel = path.relative(dir, file);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 function safe(fn, fallback, log) {

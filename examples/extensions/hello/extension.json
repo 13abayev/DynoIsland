@@ -1,0 +1,6 @@
+{
+  "id": "hello",
+  "name": "Hello",
+  "version": "1.0.0",
+  "description": "An example agent extension: anything that can send an HTTP request (a script, a build, a tool of yours) shows its sessions in the island through it."
+}

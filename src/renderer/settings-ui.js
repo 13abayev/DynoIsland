@@ -4,7 +4,7 @@
 // sections about Island itself, your connections and your reminders.
 
 const SETTINGS_TABS = [['general', 'General'], ['sessions', 'Sessions'], ['alerts', 'Alerts'], ['phone', 'Phone'], ['tools', 'Tools'], ['devices', 'Devices']];
-let settingsTab = 'general', conn = null, connBusy = '', connError = '', connFix = null, extBusy = false, displays = null, updateNote = '';
+let settingsTab = 'general', conn = null, connBusy = '', connError = '', connFix = null, extBusy = false, extNote = null, displays = null, updateNote = '';
 
 /** A tab gets a dot when something on it needs you (a check from checks.js that is not ok). */
 const needsYou = tab => (state.checks || []).some(c => c.tab === tab && (c.state === 'action' || c.state === 'error'));
@@ -96,10 +96,30 @@ function extensionsSection() {
       `<input type="checkbox" class="switch" data-ext-toggle="${esc(e.id)}"${e.enabled ? ' checked' : ''}${extBusy ? ' disabled' : ''}></div>`;
     if (e.error) h += `<div class="error">${esc(e.error)}</div>`;
     if (e.enabled && e.blocks?.length) h += `<div class="ext-blocks">${extBlocks(e.id, e.blocks)}</div>`;
+    if (!e.builtin) h += `<div class="btns"><button class="btn danger" data-ext-remove="${esc(e.id)}"${extBusy ? ' disabled' : ''}>Remove</button></div>`;
     return h + '</div>';
   };
-  return settingSection('Extensions', '<div class="hint">Each integration is an extension: switch one off and its hooks leave your connected places.</div>' +
-    list.map(card).join(''));
+  return settingSection('Extensions', '<div class="hint">Each integration is an extension: switch one off and its hooks leave your connected places. ' +
+    'Ones you add stay off until you switch them on.</div>' +
+    list.map(card).join('') +
+    (extNote ? `<div class="hint${extNote.bad ? ' warn' : ''}">${esc(extNote.text)}</div>` : '') +
+    `<div class="btns"><button class="btn" data-cmd="ext-add"${extBusy ? ' disabled' : ''}>Add extension…</button>` +
+    '<button class="btn" data-cmd="ext-folder">Open extensions folder</button><button class="btn" data-cmd="ext-guide">How to make one</button></div>');
+}
+
+/** Add extension… / Remove: what happened shows under the list. */
+async function extensionChange(run) {
+  extBusy = true;
+  extNote = null;
+  connError = '';
+  render();
+  const r = await run();
+  extBusy = false;
+  if (r.status) conn = r.status;
+  if (!r.ok && !r.cancelled) extNote = { text: r.error, bad: true };
+  else if (r.ok && r.name) extNote = r.error ? { text: `${r.name} was added, but it does not start: ${r.error}`, bad: true }
+    : { text: r.updated ? `${r.name} was updated.` : `${r.name} was added. Switch it on when you are ready.` };
+  render();
 }
 
 function islandBehaviourSection() {
@@ -167,7 +187,7 @@ async function toggleExtension(id, on) {
   const r = await api.extensionEnable(id, on);
   extBusy = false;
   if (r.status) conn = r.status;
-  if (!r.ok) connError = r.error;
+  if (!r.ok && !r.cancelled) connError = r.error; // (cancelled: you said no, and its switch goes back)
   render();
 }
 
@@ -190,7 +210,12 @@ ui.pages.settings = {
     if (btn) { runConnect(btn.dataset.place, btn.dataset.on === '1'); return true; }
     const extBtn = t.closest('[data-ext-action]');
     if (extBtn) { await extAction(extBtn); if (extBtn.dataset.extAction === 'key-login') connFix = null; render(); return true; }
+    const remove = t.closest('[data-ext-remove]');
+    if (remove) { extensionChange(() => api.extensionRemove(remove.dataset.extRemove)); return true; }
     const cmd = t.closest('[data-cmd]')?.dataset.cmd;
+    if (cmd === 'ext-add') { extensionChange(() => api.extensionAdd()); return true; }
+    if (cmd === 'ext-folder') { api.extensionsFolder(); return true; }
+    if (cmd === 'ext-guide') { api.extensionsGuide(); return true; }
     if (cmd === 'identify') { api.identifyDisplays(); return true; }
     if (cmd === 'data-folder') { api.openDataFolder(); return true; }
     if (cmd === 'uninstall') { api.uninstall(); return true; }

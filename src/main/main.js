@@ -183,6 +183,23 @@ function loadExtensions() {
   connections = new Connections({ extensions, token: config.token() });
 }
 
+/** An agent extension switched off or removed: its sessions leave the island (no one reports on them any more). */
+function dropSessionsOf(ext) {
+  const agents = new Set((ext.brings?.agents || []).map(a => a.id));
+  for (const s of [...hub.sessions.values()]) if (agents.has(s.agent)) hub.remove(s.key);
+}
+
+/** Before you switch on one of your own extensions: it gets Island's full access, so you say yes to that. */
+async function trustExtension(e, ext) {
+  const r = await dialog.showMessageBox(islands.fromSender(e.sender), {
+    type: 'warning', title: 'Switch on extension', message: `Switch on ${ext.manifest.name || ext.id}?`, noLink: true,
+    detail: 'An extension runs inside Island with Island\'s full access: your files, your sessions, and the places you connected ' +
+      '(this PC, WSL, your servers). Only switch on extensions you made yourself or trust.\n\n' + `Its folder: ${ext.dir}`,
+    buttons: ['Switch on', 'Cancel'], defaultId: 1, cancelId: 1,
+  });
+  return r.response === 0;
+}
+
 /** What an extension gets from Island (EXTENSIONS.md lists it). */
 function extensionApi(ext) {
   return {
@@ -786,18 +803,56 @@ function wireIpc(token) {
     } catch (e) { return { ok: false, error: e.message, fix: e.fix || null, status: await connectStatus() }; }
   });
   // extensions: on or off (an agent then goes into, or out of, your connected places), and their own buttons
-  handle('extensions:enable', async (id, on) => {
+  ipcMain.handle('extensions:enable', async (e, id, on) => {
     const ext = extensions.all.get(String(id));
     if (!ext) return { ok: false, error: 'No such extension.' };
+    if (on && !ext.builtin && !(await trustExtension(e, ext))) return { ok: false, cancelled: true };
     try {
       if (!on && ext.brings?.install) await connections.setAgent(ext.id, false); // out of your places first
+      if (!on) dropSessionsOf(ext);
       extensions.setEnabled(ext.id, !!on);
+      if (on && !ext.enabled) return { ok: false, error: `${ext.manifest.name || ext.id} does not start: ${ext.error}`, status: await connectStatus() };
       if (on && ext.brings?.install) await connections.setAgent(ext.id, true);
       return { ok: true, status: await connectStatus() };
     } catch (e) { return { ok: false, error: e.message, status: await connectStatus().catch(() => null) }; }
   });
   handle('extensions:action', async (id, name, arg) => {
     try { return { ok: true, ...((await extensions.action(String(id), String(name), arg)) || {}) }; } catch (e) { return { ok: false, error: e.message }; }
+  });
+  // your own extensions: Add extension… (a folder you pick is copied in), Remove, and their folder
+  ipcMain.handle('extensions:add', async e => {
+    const r = await dialog.showOpenDialog(islands.fromSender(e.sender), { title: 'The folder of an Island extension (with extension.json)', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, cancelled: true };
+    try {
+      const { ext, updated } = extensions.install(r.filePaths[0]);
+      if (updated && ext.enabled && ext.brings?.install) await connections.setAgent(ext.id, true); // its newest files into your places
+      return { ok: true, id: ext.id, name: ext.manifest.name || ext.id, updated, error: ext.error, status: await connectStatus() };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle('extensions:remove', async (e, id) => {
+    const ext = extensions.all.get(String(id));
+    if (!ext || ext.builtin) return { ok: false, error: 'Only your own extensions can be removed.' };
+    const r = await dialog.showMessageBox(islands.fromSender(e.sender), {
+      type: 'question', title: 'Remove extension', message: `Remove ${ext.manifest.name || ext.id}?`, noLink: true,
+      detail: 'Its hooks leave your connected places and its folder is deleted from your extensions folder.',
+      buttons: ['Remove', 'Cancel'], defaultId: 1, cancelId: 1,
+    });
+    if (r.response !== 0) return { ok: false, cancelled: true };
+    try {
+      if (ext.enabled && ext.brings?.install) await connections.setAgent(ext.id, false);
+      dropSessionsOf(ext);
+      extensions.remove(ext.id);
+      return { ok: true, status: await connectStatus() };
+    } catch (err) { return { ok: false, error: err.message, status: await connectStatus().catch(() => null) }; }
+  });
+  handle('extensions:folder', async () => {
+    fs.mkdirSync(extensions.userDir, { recursive: true });
+    await shell.openPath(extensions.userDir);
+  });
+  // EXTENSIONS.md, in the app that opens .md files (else shown in its folder, next to examples\)
+  handle('extensions:guide', async () => {
+    const guide = path.join(paths.APP_DIR, 'EXTENSIONS.md');
+    if (await shell.openPath(guide)) shell.showItemInFolder(guide);
   });
   handle('displays:list', () => islands.list());
   handle('displays:set', ids => {

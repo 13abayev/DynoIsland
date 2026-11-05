@@ -195,6 +195,7 @@ function demoApi() {
     codex: { name: 'Codex', color: '#b8b5ff', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 12h4.5"/></svg>' },
     chatgpt: { name: 'ChatGPT', color: '#19c37d', icon: '<svg viewBox="0 0 16 16"><path fill="currentColor" d="M2.5 4.2c0-1 .8-1.7 1.7-1.7h7.6c1 0 1.7.8 1.7 1.7v5.3c0 1-.8 1.7-1.7 1.7H7.2L4 13.6v-2.4h.2c-1 0-1.7-.8-1.7-1.7z"/></svg>' },
     'claude-web': { name: 'Claude', color: '#d97757', icon: star },
+    opencode: { name: 'OpenCode', color: '#d4d4d8', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><rect x="5.6" y="5.6" width="4.8" height="4.8" rx=".8"/></svg>' },
   };
   for (const x of demo.sessions) x.where = { wsl: 'WSL', ssh: x.host, web: x.agent === 'chatgpt' ? 'ChatGPT' : 'Claude' }[x.src] || 'Windows';
   const browserSteps = [{ type: 'steps', items: [
@@ -207,9 +208,11 @@ function demoApi() {
       demo.ext ? [{ type: 'status', ok: true, text: 'Connected: chats in your browser show up in the island' }] : [{ type: 'status', ok: false, text: 'Not connected yet' }, ...browserSteps]),
     ext('claude-code', 'Claude Code', 'agent', 'Claude Code sessions in terminals, VS Code and the Claude app.', 'claude'),
     ext('codex', 'Codex', 'agent', 'Codex sessions in WSL and on your servers.', 'codex'),
+    ext('opencode', 'OpenCode', 'agent', 'OpenCode sessions in WSL and on your servers, with its permission prompts to answer.', 'opencode'),
     ext('ssh', 'SSH servers', 'place', 'Agents on the servers in your SSH config, through Island\'s own tunnel.'),
     ext('windows', 'Windows', 'place', 'Agents on this PC.'),
     ext('wsl', 'WSL', 'place', 'Agents in your WSL distro.'),
+    { ...ext('hello', 'Hello', '', 'An example agent extension of yours.'), builtin: false, enabled: false },
   ];
   demo.extSetups = [{ id: 'browser', title: 'ChatGPT and Claude in the browser', intro: 'Island\'s browser extension tells it when a chat is answering, done, or waits for you.', pairs: true, done: !!demo.ext, blocks: demo.ext ? [] : browserSteps }];
   demo.checks = [
@@ -253,6 +256,10 @@ function demoApi() {
     },
     extensionEnable: async (id, on) => { const e = demo.extensions.find(x => x.id === id); if (e) e.enabled = on; fire('state', demo); return { ok: true, status: demoStatus() }; },
     extensionAction: async () => ({ ok: true, note: 'Demo mode' }),
+    extensionAdd: async () => ({ ok: false, error: 'Demo mode: nothing is added' }),
+    extensionRemove: async id => { demo.extensions = demo.extensions.filter(x => x.id !== id); fire('state', demo); return { ok: true, status: demoStatus() }; },
+    extensionsFolder: async () => {},
+    extensionsGuide: async () => {},
     setSettings: async p => { Object.assign(demo.settings, p); fire('state', demo); return demo.settings; },
     detect: async () => {
       await new Promise(r => setTimeout(r, 600));

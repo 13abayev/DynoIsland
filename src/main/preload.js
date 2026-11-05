@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('islandApi', {
   // extensions: on or off, and the buttons in their own content
   extensionEnable: (id, on) => ipcRenderer.invoke('extensions:enable', id, !!on),
   extensionAction: (id, name, arg) => ipcRenderer.invoke('extensions:action', id, name, arg),
+  extensionAdd: () => ipcRenderer.invoke('extensions:add'),
+  extensionRemove: id => ipcRenderer.invoke('extensions:remove', id),
+  extensionsFolder: () => ipcRenderer.invoke('extensions:folder'),
+  extensionsGuide: () => ipcRenderer.invoke('extensions:guide'),
   setSettings: patch => ipcRenderer.invoke('settings:set', patch),
   refreshLimits: () => ipcRenderer.invoke('limits:refresh'),
   answer: (key, choice) => ipcRenderer.invoke('answer', key, choice),
