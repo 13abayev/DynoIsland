@@ -1,0 +1,6 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "version": "1.0.0",
+  "description": "OpenCode sessions in WSL and on your servers: what they do, its permission prompts to allow or deny from the island, and replies to finished ones."
+}
